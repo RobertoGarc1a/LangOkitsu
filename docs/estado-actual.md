@@ -12,6 +12,8 @@ cargo run -- examples/tipos.oki
 cargo run -- examples/operaciones.oki
 cargo run -- examples/constantes.oki
 cargo run -- examples/arrays.oki
+cargo run -- examples/condiciones.oki
+cargo run -- examples/bucles.oki
 ```
 
 Cargo compila el intérprete y lo ejecuta. El separador `--` hace que la ruta llegue al programa como argumento. Se usa el primer argumento; los adicionales se ignoran. `.oki` es la extensión del proyecto, pero no se comprueba la extensión.
@@ -70,7 +72,7 @@ Produce `25` y `26`, cada uno en su línea. La copia guarda el valor de ese mome
 - Las variables deben declararse antes de usarlas. No se permite `int x = x;`, ni declarar dos veces el mismo nombre.
 - Existe un ámbito global por archivo y, dentro de él, cada bloque `{ ... }` de un `if` abre un ámbito propio. La búsqueda de un nombre empieza en el bloque actual y continúa hacia fuera. Cada ejecución empieza vacía.
 - Los nombres empiezan por letra ASCII o `_`, y continúan con letras ASCII, dígitos o `_`. Distinguen mayúsculas de minúsculas.
-- `int`, `float`, `bool`, `char`, `string`, `const`, `if`, `else`, `true`, `false`, `print` y `println` son palabras reservadas. Nombres como `int2` o `println2` sí se permiten.
+- `int`, `float`, `bool`, `char`, `string`, `const`, `if`, `else`, `while`, `for`, `foreach`, `in`, `true`, `false`, `print` y `println` son palabras reservadas. Nombres como `int2` o `println2` sí se permiten.
 
 Estos fragmentos son **inválidos**:
 
@@ -290,13 +292,77 @@ adulto
 20
 ```
 
+## Bucles
+
+Un **bucle** repite un bloque de instrucciones. Hay tres formas: `while`, `for` y `foreach`. En las tres el cuerpo va siempre entre llaves, el bucle completo no lleva `;` final y cada vuelta abre y cierra el ámbito del cuerpo.
+
+### while
+
+`while (condición) { ... }` repite el bloque mientras la condición sea `bool`:
+
+```oki
+int i = 3;
+while (i > 0) {
+    println(i);
+    i = i - 1;
+}
+println("fin");
+```
+
+Produce `3`, `2`, `1` y `fin`, cada uno en su línea. La condición se evalúa antes de cada vuelta; si la primera vez es `false`, el cuerpo no se ejecuta. Si la condición no es `bool`, es un error antes de ejecutar: `while (1) { ... }` señala la línea del `while`.
+
+### for
+
+`for (inicialización; condición; actualización) { ... }` reúne las tres partes en la cabecera, separadas por `;`. La inicialización admite una declaración (`int i = 0`) o una asignación a una variable ya declarada (`i = 0`); la condición es una expresión que debe ser `bool`; la actualización es una asignación. Las tres son obligatorias y no existen `++` ni `+=`, así que el avance se escribe `i = i + 1`:
+
+```oki
+for (int i = 0; i < 3; i = i + 1) {
+    println(i);
+}
+```
+
+Produce `0`, `1` y `2`. El orden de ejecución es: la inicialización una sola vez y, en cada vuelta, la condición, el cuerpo y la actualización. La variable declarada en la inicialización solo existe dentro del `for`, condición y actualización incluidas; fuera, el nombre no está declarado. Se puede usar otro contador con el mismo nombre fuera del bucle sin conflicto.
+
+### foreach
+
+`foreach (tipo nombre in array) { ... }` recorre los elementos de un array, del primero al último. El tipo declarado debe coincidir exactamente con el de los elementos, que no se convierten:
+
+```oki
+int[] numeros = [10, 20, 30];
+int total = 0;
+foreach (int n in numeros) {
+    total = total + n;
+}
+println(total);
+```
+
+Produce `60`. El array se evalúa una sola vez, al empezar. En cada vuelta `n` guarda una copia del elemento: modificar `n` o el array original dentro del cuerpo no cambia los elementos que quedan por recorrer. Un array vacío no ejecuta ninguna vuelta. También se pueden recorrer arrays cuyos elementos son a su vez arrays, por ejemplo `foreach (int[] fila in tabla)`.
+
+- `foreach` recorre únicamente arrays. Una expresión de otro tipo, como `foreach (int n in 1)`, es un error antes de ejecutar.
+- La variable del bucle es una variable normal dentro del cuerpo: se puede leer y reasignar, pero nunca es constante. No se puede declarar el mismo nombre en el mismo nivel que el bucle.
+- El cuerpo tiene su propio ámbito, igual que una rama de `if`: un nombre declarado dentro no existe fuera y puede ocultar a un nombre exterior.
+
+El ejemplo [bucles.oki](../examples/bucles.oki) combina `while`, dos `for` anidados y `foreach`:
+
+```text
+15
+11
+12
+21
+22
+Ana
+Luis
+Mar
+20
+```
+
 ## Reglas compartidas
 
 | Elemento | Comportamiento |
 | --- | --- |
 | Impresión | `print(expresión);` o `println(expresión);`, con exactamente una expresión. |
 | Salida | `print` no añade salto final; `println` añade uno. Se respeta el orden del archivo. |
-| Terminación | Todas las declaraciones, asignaciones e impresiones terminan en `;`. Un `if`/`else` completo termina en `}` y no lleva `;`; cada instrucción de su interior sí lo lleva. Un salto de línea no sustituye el `;`. |
+| Terminación | Todas las declaraciones, asignaciones e impresiones terminan en `;`. Un `if`/`else`, un `while`, un `for` y un `foreach` completos terminan en `}` y no llevan `;`; cada instrucción de su interior sí lo lleva. Un salto de línea no sustituye el `;`. |
 | Espacios entre tokens | Se ignoran espacios, tabulaciones, retornos de carro y saltos de línea. |
 | Texto entre comillas | Conserva Unicode, espacios, punto y coma y saltos de línea reales. Termina en la siguiente comilla del mismo tipo. |
 | Secuencias de escape | No se interpretan, conservando la regla anterior para cadenas. Una barra no escapa comillas. `\n` son dos caracteres y no cabe en un `char`. |
@@ -306,7 +372,7 @@ adulto
 
 ## Límites de esta versión
 
-Todavía no hay conversión explícita de tipos, operaciones de bits, potencia, asignaciones compuestas (`+=`), incremento/decremento, acceso por índice a cadenas ni métodos de cadenas, comentarios, bucles ni funciones definidas por el usuario. Los bloques solo existen como ramas de un `if`; no hay un bloque suelto ni una instrucción que declare un ámbito por sí misma. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
+Todavía no hay conversión explícita de tipos, operaciones de bits, potencia, asignaciones compuestas (`+=`), incremento/decremento, acceso por índice a cadenas ni métodos de cadenas, comentarios ni funciones definidas por el usuario. Los bucles `while`, `for` y `foreach` no admiten `break` ni `continue`, y el `for` exige sus tres partes. No hay un bloque suelto ni una instrucción que declare un ámbito por sí misma más allá del cuerpo de un `if` o de un bucle. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
 
 No existen `var`, `let`, `auto`, `any`, `null`, `void`, alias como `double` o `long`, tipos sin signo, otras colecciones, clases ni tipos definidos por el usuario. Se dispone de los cinco tipos básicos y arrays homogéneos, es decir, de elementos del mismo tipo. `print` y `println` siguen siendo instrucciones reservadas; sus paréntesis no implican un sistema general de llamadas.
 
@@ -314,7 +380,7 @@ La ejecución recorre un árbol de sintaxis. No se genera código máquina ni by
 
 ## Qué se comprueba
 
-Las 46 pruebas de [src/main.rs](../src/main.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas nuevas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa.
+Las 52 pruebas de [src/main.rs](../src/main.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Las cinco pruebas nuevas de bucles cubren el ejemplo `bucles.oki`, la repetición de `while`, el orden inicialización-condición-cuerpo-actualización del `for`, la actualización de elementos por índice, el ámbito propio del contador, la ocultación de nombres, el recorrido y la copia de elementos de `foreach` (incluidos arrays anidados y vacíos), la comprobación del tipo de elemento, el rechazo de `for` con constante y las condiciones y sintaxis inválidas de los tres bucles. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa.
 
 ```sh
 cargo fmt -- --check

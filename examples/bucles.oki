@@ -1,0 +1,25 @@
+int suma = 0;
+int i = 1;
+while (i <= 5) {
+    suma = suma + i;
+    i = i + 1;
+}
+println(suma);
+
+for (int fila = 1; fila <= 2; fila = fila + 1) {
+    for (int columna = 1; columna <= 2; columna = columna + 1) {
+        println(fila * 10 + columna);
+    }
+}
+
+string[] nombres = ["Ana", "Luis", "Mar"];
+foreach (string nombre in nombres) {
+    println(nombre);
+}
+
+int[] numeros = [1, 2, 3, 4];
+int doble = 0;
+foreach (int n in numeros) {
+    doble = doble + n * 2;
+}
+println(doble);

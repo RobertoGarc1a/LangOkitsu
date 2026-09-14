@@ -71,6 +71,35 @@ if (edad < 13) {
 
 Imprime `mayor de edad` y `adultez`. Se puede encadenar con `else if` y omitir el `else`. Cada bloque `{ ... }` abre un ámbito propio: los nombres declarados dentro solo existen ahí y se pueden reutilizar en otro bloque, mientras que las variables de fuera se pueden reasignar dentro. Consulta las [reglas de if/else](docs/estado-actual.md#control-de-flujo-if-y-else).
 
+Un **while** repite un bloque mientras su condición sea `bool`:
+
+```oki
+int i = 1;
+while (i <= 3) {
+    println(i);
+    i = i + 1;
+}
+```
+
+Imprime `1`, `2` y `3`. El **for** reúne en su cabecera la inicialización, la condición y la actualización, separadas por `;`. Las tres son obligatorias y no hay `++` ni `+=`:
+
+```oki
+for (int i = 0; i < 3; i = i + 1) {
+    println(i);
+}
+```
+
+El **foreach** recorre un array del primero al último elemento, indicando el tipo de cada uno:
+
+```oki
+string[] nombres = ["Ana", "Luis"];
+foreach (string nombre in nombres) {
+    println(nombre);
+}
+```
+
+Los tres terminan en `}` y no llevan `;` final. Su cuerpo es siempre un bloque `{ ... }` con su propio ámbito, y la variable del `for` y la del `foreach` solo existen dentro del bucle. Consulta las [reglas de los bucles](docs/estado-actual.md#bucles).
+
 ```sh
 cargo run -- examples/hello.oki
 cargo run -- examples/tipos.oki
@@ -78,6 +107,7 @@ cargo run -- examples/operaciones.oki
 cargo run -- examples/constantes.oki
 cargo run -- examples/arrays.oki
 cargo run -- examples/condiciones.oki
+cargo run -- examples/bucles.oki
 ```
 
 ## Documentación para aprender
@@ -105,7 +135,7 @@ Seguimos el intérprete de árbol de [Crafting Interpreters](https://craftingint
 | [src/type_checker.rs](src/type_checker.rs) | Comprobar nombres y tipos antes de ejecutar; adaptación propia para el tipado estricto. |
 | [src/interpreter.rs](src/interpreter.rs) | Evaluar el AST y guardar los valores de las variables (capítulos 7 y 8). |
 
-El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad exacta. Solo se implementa el fragmento descrito en la documentación: no hay todavía bucles, funciones ni máquina virtual.
+El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad exacta. Solo se implementa el fragmento descrito en la documentación: no hay todavía funciones ni máquina virtual.
 
 ## Comprobaciones
 

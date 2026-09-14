@@ -1,7 +1,7 @@
 use std::{collections::HashMap, error::Error, io::Write};
 
 use crate::{
-    parser::{BinaryOp, Expr, Stmt, UnaryOp},
+    parser::{BinaryOp, Expr, Name, Stmt, UnaryOp},
     value::Value,
 };
 
@@ -86,6 +86,41 @@ impl<W: Write> Interpreter<W> {
                     self.execute_block(else_branch)?;
                 }
             }
+            Stmt::While {
+                condition, body, ..
+            } => {
+                while self.evaluate_bool(condition, "while")? {
+                    self.execute_block(body)?;
+                }
+            }
+            Stmt::For {
+                initializer,
+                condition,
+                update,
+                body,
+                ..
+            } => {
+                // El contador vive en un ámbito propio que envuelve el bucle.
+                self.scopes.push(HashMap::new());
+                let result = self.execute_for(initializer, condition, update, body);
+                self.scopes.pop();
+                result?;
+            }
+            Stmt::Foreach {
+                name,
+                iterable,
+                body,
+                ..
+            } => {
+                let value = self.evaluate(iterable)?;
+                let Value::Array(elements) = value else {
+                    return Err("'foreach' solo recorre arrays.".into());
+                };
+                self.scopes.push(HashMap::new());
+                let result = self.execute_foreach(name, elements, body);
+                self.scopes.pop();
+                result?;
+            }
             Stmt::Print(expression) => {
                 let value = self.evaluate(expression)?;
                 write!(self.output, "{value}")?;
@@ -104,6 +139,47 @@ impl<W: Write> Interpreter<W> {
             self.execute(statement)?;
         }
         self.scopes.pop();
+        Ok(())
+    }
+
+    fn evaluate_bool(&self, condition: &Expr, keyword: &str) -> Result<bool, String> {
+        let Value::Bool(value) = self.evaluate(condition)? else {
+            return Err(format!("La condición de '{keyword}' debe ser bool."));
+        };
+        Ok(value)
+    }
+
+    fn execute_for(
+        &mut self,
+        initializer: &Stmt,
+        condition: &Expr,
+        update: &Stmt,
+        body: &[Stmt],
+    ) -> Result<(), Box<dyn Error>> {
+        self.execute(initializer)?;
+        // La condición se comprueba antes de cada vuelta; la actualización
+        // ocurre después del cuerpo, como en el 'for' de C.
+        while self.evaluate_bool(condition, "for")? {
+            self.execute_block(body)?;
+            self.execute(update)?;
+        }
+        Ok(())
+    }
+
+    fn execute_foreach(
+        &mut self,
+        name: &Name,
+        elements: Vec<Value>,
+        body: &[Stmt],
+    ) -> Result<(), Box<dyn Error>> {
+        for element in elements {
+            // Cada vuelta reinicia la variable con una copia del elemento.
+            self.scopes
+                .last_mut()
+                .expect("ámbito abierto")
+                .insert(name.text.clone(), element);
+            self.execute_block(body)?;
+        }
         Ok(())
     }
 

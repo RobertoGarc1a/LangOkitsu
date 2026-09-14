@@ -27,73 +27,146 @@ impl TypeChecker {
 
     fn check_statements(&mut self, statements: &[Stmt]) -> Result<(), String> {
         for statement in statements {
-            match statement {
-                Stmt::Declare {
-                    declared_type,
-                    is_constant,
-                    name,
-                    initializer,
-                } => {
-                    if self
-                        .scopes
-                        .last()
-                        .is_some_and(|s| s.contains_key(&name.text))
-                    {
-                        return Err(
-                            name.error(&format!("La variable '{}' ya está declarada.", name.text))
-                        );
-                    }
-                    let actual = self.expression_type_expected(initializer, Some(declared_type))?;
-                    Self::require_type(name, declared_type, &actual)?;
-                    // Registrar después del inicializador impide int x = x;.
-                    self.scopes.last_mut().expect("ámbito abierto").insert(
-                        name.text.clone(),
-                        VariableInfo {
-                            declared_type: declared_type.clone(),
-                            is_constant: *is_constant,
-                        },
+            self.check_statement(statement)?;
+        }
+        Ok(())
+    }
+
+    fn check_statement(&mut self, statement: &Stmt) -> Result<(), String> {
+        match statement {
+            Stmt::Declare {
+                declared_type,
+                is_constant,
+                name,
+                initializer,
+            } => {
+                if self
+                    .scopes
+                    .last()
+                    .is_some_and(|s| s.contains_key(&name.text))
+                {
+                    return Err(
+                        name.error(&format!("La variable '{}' ya está declarada.", name.text))
                     );
                 }
-                Stmt::Assign {
-                    name,
-                    indices,
-                    value,
-                } => {
-                    let expected = self.lookup(name)?;
-                    if expected.is_constant {
-                        return Err(name.error(&format!(
-                            "No se puede reasignar la constante '{}'.",
-                            name.text
-                        )));
-                    }
-                    let mut target_type = expected.declared_type.clone();
-                    for (index, line) in indices {
-                        target_type = self.indexed_type(target_type, index, *line)?;
-                    }
-                    let actual = self.expression_type_expected(value, Some(&target_type))?;
-                    Self::require_type(name, &target_type, &actual)?;
+                let actual = self.expression_type_expected(initializer, Some(declared_type))?;
+                Self::require_type(name, declared_type, &actual)?;
+                // Registrar después del inicializador impide int x = x;.
+                self.scopes.last_mut().expect("ámbito abierto").insert(
+                    name.text.clone(),
+                    VariableInfo {
+                        declared_type: declared_type.clone(),
+                        is_constant: *is_constant,
+                    },
+                );
+            }
+            Stmt::Assign {
+                name,
+                indices,
+                value,
+            } => {
+                let expected = self.lookup(name)?;
+                if expected.is_constant {
+                    return Err(name.error(&format!(
+                        "No se puede reasignar la constante '{}'.",
+                        name.text
+                    )));
                 }
-                Stmt::If {
-                    condition,
-                    then_branch,
-                    else_branch,
-                    line,
-                } => {
-                    let actual = self.expression_type(condition)?;
-                    if actual != Type::Bool {
-                        return Err(format!(
-                            "Línea {line}: la condición de 'if' debe ser bool; se recibió {actual}."
-                        ));
-                    }
-                    self.check_block(then_branch)?;
-                    if let Some(else_branch) = else_branch {
-                        self.check_block(else_branch)?;
-                    }
+                let mut target_type = expected.declared_type.clone();
+                for (index, line) in indices {
+                    target_type = self.indexed_type(target_type, index, *line)?;
                 }
-                Stmt::Print(expression) | Stmt::Println(expression) => {
-                    self.expression_type(expression)?;
+                let actual = self.expression_type_expected(value, Some(&target_type))?;
+                Self::require_type(name, &target_type, &actual)?;
+            }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                line,
+            } => {
+                self.require_bool(condition, "if", *line)?;
+                self.check_block(then_branch)?;
+                if let Some(else_branch) = else_branch {
+                    self.check_block(else_branch)?;
                 }
             }
+            Stmt::While {
+                condition,
+                body,
+                line,
+            } => {
+                self.require_bool(condition, "while", *line)?;
+                self.check_block(body)?;
+            }
+            Stmt::For {
+                initializer,
+                condition,
+                update,
+                body,
+                line,
+            } => {
+                // El ámbito del contador abarca inicialización, condición,
+                // actualización y cuerpo; el cuerpo abre además el suyo.
+                self.scopes.push(HashMap::new());
+                let result = self.check_for(initializer, condition, update, body, *line);
+                self.scopes.pop();
+                result?;
+            }
+            Stmt::Foreach {
+                declared_type,
+                name,
+                iterable,
+                body,
+                line,
+            } => {
+                let iterable_type = self.expression_type(iterable)?;
+                let Type::Array(element) = &iterable_type else {
+                    return Err(format!(
+                        "Línea {line}: 'foreach' solo recorre arrays; se recibió {iterable_type}."
+                    ));
+                };
+                let element = element.as_ref().clone();
+                Self::require_type(name, declared_type, &element)?;
+                self.scopes.push(HashMap::new());
+                self.scopes.last_mut().expect("ámbito abierto").insert(
+                    name.text.clone(),
+                    VariableInfo {
+                        declared_type: declared_type.clone(),
+                        is_constant: false,
+                    },
+                );
+                let result = self.check_block(body);
+                self.scopes.pop();
+                result?;
+            }
+            Stmt::Print(expression) | Stmt::Println(expression) => {
+                self.expression_type(expression)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_for(
+        &mut self,
+        initializer: &Stmt,
+        condition: &Expr,
+        update: &Stmt,
+        body: &[Stmt],
+        line: usize,
+    ) -> Result<(), String> {
+        self.check_statement(initializer)?;
+        self.require_bool(condition, "for", line)?;
+        self.check_statement(update)?;
+        self.check_block(body)
+    }
+
+    fn require_bool(&self, condition: &Expr, keyword: &str, line: usize) -> Result<(), String> {
+        let actual = self.expression_type(condition)?;
+        if actual != Type::Bool {
+            return Err(format!(
+                "Línea {line}: la condición de '{keyword}' debe ser bool; se recibió {actual}."
+            ));
         }
         Ok(())
     }

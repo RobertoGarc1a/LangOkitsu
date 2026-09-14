@@ -115,6 +115,25 @@ pub enum Stmt {
         else_branch: Option<Vec<Stmt>>,
         line: usize,
     },
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+        line: usize,
+    },
+    For {
+        initializer: Box<Stmt>,
+        condition: Expr,
+        update: Box<Stmt>,
+        body: Vec<Stmt>,
+        line: usize,
+    },
+    Foreach {
+        declared_type: Type,
+        name: Name,
+        iterable: Expr,
+        body: Vec<Stmt>,
+        line: usize,
+    },
     Print(Expr),
     Println(Expr),
 }
@@ -139,25 +158,17 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Stmt, String> {
-        // Un if termina en '}' y no lleva ';'. El resto de instrucciones sí.
-        if self.peek().kind == TokenKind::If {
-            return self.if_statement();
+        // Los bucles y el if terminan en '}' y no llevan ';'. El resto sí.
+        match self.peek().kind {
+            TokenKind::If => return self.if_statement(),
+            TokenKind::While => return self.while_statement(),
+            TokenKind::For => return self.for_statement(),
+            TokenKind::Foreach => return self.foreach_statement(),
+            _ => {}
         }
         let statement = match self.peek().kind {
             TokenKind::Const | TokenKind::Type(_) => self.declaration()?,
-            TokenKind::Identifier(_) => {
-                let name = self.name()?;
-                let mut indices = Vec::new();
-                while self.peek().kind == TokenKind::LeftBracket {
-                    indices.push(self.index()?);
-                }
-                self.consume(TokenKind::Equal, "Se esperaba '=' para asignar a una variable ya declarada. Para declararla hay que indicar su tipo.")?;
-                Stmt::Assign {
-                    name,
-                    indices,
-                    value: self.expression()?,
-                }
-            }
+            TokenKind::Identifier(_) => self.assignment()?,
             TokenKind::Print | TokenKind::Println => {
                 let newline = self.peek().kind == TokenKind::Println;
                 self.current += 1;
@@ -165,7 +176,7 @@ impl Parser {
             }
             _ => {
                 return Err(self.error(
-                    "Se esperaba una declaración con tipo, una asignación, 'if', 'print' o 'println'.",
+                    "Se esperaba una declaración con tipo, una asignación, 'if', 'while', 'for', 'foreach', 'print' o 'println'.",
                 ));
             }
         };
@@ -176,26 +187,27 @@ impl Parser {
         Ok(statement)
     }
 
+    // Una asignación sin el ';' final, para reutilizarla dentro de un 'for'.
+    fn assignment(&mut self) -> Result<Stmt, String> {
+        let name = self.name()?;
+        let mut indices = Vec::new();
+        while self.peek().kind == TokenKind::LeftBracket {
+            indices.push(self.index()?);
+        }
+        self.consume(TokenKind::Equal, "Se esperaba '=' para asignar a una variable ya declarada. Para declararla hay que indicar su tipo.")?;
+        Ok(Stmt::Assign {
+            name,
+            indices,
+            value: self.expression()?,
+        })
+    }
+
     fn declaration(&mut self) -> Result<Stmt, String> {
         let is_constant = self.peek().kind == TokenKind::Const;
         if is_constant {
             self.current += 1;
         }
-        let TokenKind::Type(declared_type) = &self.peek().kind else {
-            return Err(self.error(
-                "Se esperaba un tipo (int, float, bool, char o string) después de 'const'.",
-            ));
-        };
-        let mut declared_type = declared_type.clone();
-        self.current += 1;
-        while self.peek().kind == TokenKind::LeftBracket {
-            self.current += 1;
-            self.consume(
-                TokenKind::RightBracket,
-                "Se esperaba ']' en el tipo del array; no se declara su longitud.",
-            )?;
-            declared_type = Type::Array(Box::new(declared_type));
-        }
+        let declared_type = self.array_type()?;
         let name = self.name()?;
         self.consume(
             TokenKind::Equal,
@@ -207,6 +219,24 @@ impl Parser {
             name,
             initializer: self.expression()?,
         })
+    }
+
+    // Un tipo básico seguido de los '[]' que indican niveles de array.
+    fn array_type(&mut self) -> Result<Type, String> {
+        let TokenKind::Type(basic) = &self.peek().kind else {
+            return Err(self.error("Se esperaba un tipo (int, float, bool, char o string)."));
+        };
+        let mut declared_type = basic.clone();
+        self.current += 1;
+        while self.peek().kind == TokenKind::LeftBracket {
+            self.current += 1;
+            self.consume(
+                TokenKind::RightBracket,
+                "Se esperaba ']' en el tipo del array; no se declara su longitud.",
+            )?;
+            declared_type = Type::Array(Box::new(declared_type));
+        }
+        Ok(declared_type)
     }
 
     fn if_statement(&mut self) -> Result<Stmt, String> {
@@ -234,6 +264,90 @@ impl Parser {
             condition,
             then_branch,
             else_branch,
+            line,
+        })
+    }
+
+    fn while_statement(&mut self) -> Result<Stmt, String> {
+        let line = self.peek().line;
+        self.current += 1;
+        self.consume(TokenKind::LeftParen, "Se esperaba '(' después de 'while'.")?;
+        let condition = self.expression()?;
+        self.consume(
+            TokenKind::RightParen,
+            "Se esperaba ')' después de la condición de 'while'.",
+        )?;
+        let body = self.block()?;
+        Ok(Stmt::While {
+            condition,
+            body,
+            line,
+        })
+    }
+
+    fn for_statement(&mut self) -> Result<Stmt, String> {
+        let line = self.peek().line;
+        self.current += 1;
+        self.consume(TokenKind::LeftParen, "Se esperaba '(' después de 'for'.")?;
+        // La inicialización puede declarar la variable del contador o reasignar
+        // una ya existente. Condición y actualización son obligatorias.
+        let initializer = match self.peek().kind {
+            TokenKind::Const | TokenKind::Type(_) => self.declaration()?,
+            TokenKind::Identifier(_) => self.assignment()?,
+            _ => {
+                return Err(
+                    self.error("Se esperaba una declaración o una asignación al inicio de 'for'.")
+                );
+            }
+        };
+        self.consume(
+            TokenKind::Semicolon,
+            "Se esperaba ';' después de la inicialización de 'for'.",
+        )?;
+        let condition = self.expression()?;
+        self.consume(
+            TokenKind::Semicolon,
+            "Se esperaba ';' después de la condición de 'for'.",
+        )?;
+        let update = self.assignment()?;
+        self.consume(
+            TokenKind::RightParen,
+            "Se esperaba ')' después de la actualización de 'for'.",
+        )?;
+        let body = self.block()?;
+        Ok(Stmt::For {
+            initializer: Box::new(initializer),
+            condition,
+            update: Box::new(update),
+            body,
+            line,
+        })
+    }
+
+    fn foreach_statement(&mut self) -> Result<Stmt, String> {
+        let line = self.peek().line;
+        self.current += 1;
+        self.consume(
+            TokenKind::LeftParen,
+            "Se esperaba '(' después de 'foreach'.",
+        )?;
+        let declared_type = self.array_type()?;
+        let name = self.name()?;
+        self.consume(
+            TokenKind::In,
+            "Se esperaba 'in' después del nombre del bucle.",
+        )?;
+        let iterable = self.expression()?;
+        self.consume(
+            TokenKind::RightParen,
+            "Se esperaba ')' después del array de 'foreach'.",
+        )?;
+        let body = self.block()?;
+        Ok(Stmt::Foreach {
+            declared_type,
+            name,
+            iterable,
+            body,
             line,
         })
     }
