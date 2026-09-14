@@ -49,6 +49,23 @@ println("Hola" + " mundo");
 
 Los números admiten `+`, `-`, `*`, `/`, `%` y signos unarios; los booleanos, `!`, `&&` y `||`; las cadenas, concatenación con `+`. Todos los tipos admiten `==` y `!=`; números, caracteres y cadenas también admiten `<`, `<=`, `>` y `>=`. Los dos operandos deben tener el mismo tipo.
 
+Para modificar una variable ya declarada existen formas abreviadas de la asignación: `+=`, `-=`, `++` y `--`. Son instrucciones completas, con `;`, y siguen las mismas reglas de tipo que `+` o `-`:
+
+```oki
+int contador = 0;
+contador++;
+contador += 5;
+contador -= 3;
+contador--;
+println(contador);
+
+float precio = 10.0;
+precio += 2.5;
+println(precio);
+```
+
+Imprime `2` y `12.5`. `+=` admite `int`, `float` y `string` (concatenación) igual que `+`; `-=` admite `int` y `float` igual que `-`. `++` y `--` suman o restan una unidad y solo admiten `int` y `float`. También se pueden aplicar a un elemento de array: `numeros[0]++`, `numeros[1] += 10`. Consulta las [reglas de las asignaciones abreviadas](docs/estado-actual.md#asignaciones-abreviadas).
+
 Un **if** elige qué bloque ejecutar según una condición de tipo `bool`. Las ramas van entre llaves y el `if` completo no lleva `;` final; cada instrucción de dentro sí lo lleva:
 
 ```oki
@@ -81,10 +98,10 @@ while (i <= 3) {
 }
 ```
 
-Imprime `1`, `2` y `3`. El **for** reúne en su cabecera la inicialización, la condición y la actualización, separadas por `;`. Las tres son obligatorias y no hay `++` ni `+=`:
+Imprime `1`, `2` y `3`. El **for** reúne en su cabecera la inicialización, la condición y la actualización, separadas por `;`. Las tres son obligatorias. La actualización puede ser una asignación, una asignación abreviada o un incremento:
 
 ```oki
-for (int i = 0; i < 3; i = i + 1) {
+for (int i = 0; i < 3; i++) {
     println(i);
 }
 ```
@@ -108,6 +125,7 @@ cargo run -- examples/constantes.oki
 cargo run -- examples/arrays.oki
 cargo run -- examples/condiciones.oki
 cargo run -- examples/bucles.oki
+cargo run -- examples/asignaciones.oki
 ```
 
 ## Documentación para aprender

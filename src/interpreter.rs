@@ -44,32 +44,41 @@ impl<W: Write> Interpreter<W> {
                 indices,
                 value,
             } => {
-                let scope = self.scope_containing(&name.text).ok_or_else(|| {
-                    name.error(&format!("La variable '{}' no está declarada.", name.text))
-                })?;
-                // Resolver y validar el destino antes del valor nuevo. No hay
-                // cambios parciales si falla un índice o la expresión asignada.
-                let mut positions = Vec::new();
-                {
-                    let mut target = &self.scopes[scope][&name.text];
-                    for (index, line) in indices {
-                        let (elements, position) =
-                            Self::array_position(target, self.evaluate(index)?, *line)?;
-                        positions.push(position);
-                        target = &elements[position];
-                    }
-                }
+                let (scope, positions) = self.resolve_target(name, indices)?;
                 let value = self.evaluate(value)?;
-                let mut target = self.scopes[scope]
-                    .get_mut(&name.text)
-                    .expect("nombre validado");
-                for position in positions {
-                    let Value::Array(elements) = target else {
-                        unreachable!("destino validado")
-                    };
-                    target = &mut elements[position];
-                }
-                *target = value;
+                self.write_target(scope, &name.text, &positions, value);
+            }
+            Stmt::CompoundAssign {
+                name,
+                indices,
+                operator,
+                value,
+                line,
+            } => {
+                // Equivale a `x = x <op> v`: se lee el destino, se evalúa el
+                // valor nuevo y se escribe solo si la operación tiene éxito.
+                let (scope, positions) = self.resolve_target(name, indices)?;
+                let current = self.target_value(scope, &name.text, &positions);
+                let operand = self.evaluate(value)?;
+                let result = Self::binary(current, operator.binary(), operand, *line)?;
+                self.write_target(scope, &name.text, &positions, result);
+            }
+            Stmt::Increment {
+                name,
+                indices,
+                operator,
+                line,
+            } => {
+                let (scope, positions) = self.resolve_target(name, indices)?;
+                let current = self.target_value(scope, &name.text, &positions);
+                // El paso conserva el tipo del destino: 1 para int, 1.0 para float.
+                let step = match current {
+                    Value::Int(_) => Value::Int(1),
+                    Value::Float(_) => Value::Float(1.0),
+                    _ => unreachable!("tipo validado"),
+                };
+                let result = Self::binary(current, operator.binary(), step, *line)?;
+                self.write_target(scope, &name.text, &positions, result);
             }
             Stmt::If {
                 condition,
@@ -187,6 +196,50 @@ impl<W: Write> Interpreter<W> {
         self.scopes
             .iter()
             .rposition(|scope| scope.contains_key(name))
+    }
+
+    // Busca el ámbito del nombre y valida cada índice, sin modificar nada. Si un
+    // índice falla, el destino no se altera. Devuelve el ámbito y las posiciones.
+    fn resolve_target(
+        &self,
+        name: &Name,
+        indices: &[(Expr, usize)],
+    ) -> Result<(usize, Vec<usize>), String> {
+        let scope = self.scope_containing(&name.text).ok_or_else(|| {
+            name.error(&format!("La variable '{}' no está declarada.", name.text))
+        })?;
+        let mut positions = Vec::new();
+        let mut target = &self.scopes[scope][&name.text];
+        for (index, line) in indices {
+            let (elements, position) = Self::array_position(target, self.evaluate(index)?, *line)?;
+            positions.push(position);
+            target = &elements[position];
+        }
+        Ok((scope, positions))
+    }
+
+    // Copia del valor actual del destino ya validado.
+    fn target_value(&self, scope: usize, name: &str, positions: &[usize]) -> Value {
+        let mut target = &self.scopes[scope][name];
+        for position in positions {
+            let Value::Array(elements) = target else {
+                unreachable!("destino validado")
+            };
+            target = &elements[*position];
+        }
+        target.clone()
+    }
+
+    // Sustituye el valor del destino ya validado.
+    fn write_target(&mut self, scope: usize, name: &str, positions: &[usize], value: Value) {
+        let mut target = self.scopes[scope].get_mut(name).expect("nombre validado");
+        for position in positions {
+            let Value::Array(elements) = target else {
+                unreachable!("destino validado")
+            };
+            target = &mut elements[*position];
+        }
+        *target = value;
     }
 
     fn evaluate(&self, expression: &Expr) -> Result<Value, String> {

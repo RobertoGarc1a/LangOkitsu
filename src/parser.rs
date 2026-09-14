@@ -66,6 +66,52 @@ pub enum BinaryOp {
     Or,
 }
 
+// Operador de una asignación compuesta: `x += v` equivale a `x = x + v`.
+#[derive(Clone, Copy, Debug)]
+pub enum AssignOp {
+    Add,
+    Subtract,
+}
+
+impl AssignOp {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Self::Add => "+=",
+            Self::Subtract => "-=",
+        }
+    }
+
+    pub fn binary(self) -> BinaryOp {
+        match self {
+            Self::Add => BinaryOp::Add,
+            Self::Subtract => BinaryOp::Subtract,
+        }
+    }
+}
+
+// Incremento o decremento en una unidad: `x++` equivale a `x = x + 1`.
+#[derive(Clone, Copy, Debug)]
+pub enum IncrementOp {
+    Increment,
+    Decrement,
+}
+
+impl IncrementOp {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Self::Increment => "++",
+            Self::Decrement => "--",
+        }
+    }
+
+    pub fn binary(self) -> BinaryOp {
+        match self {
+            Self::Increment => BinaryOp::Add,
+            Self::Decrement => BinaryOp::Subtract,
+        }
+    }
+}
+
 impl UnaryOp {
     pub fn symbol(self) -> &'static str {
         match self {
@@ -108,6 +154,19 @@ pub enum Stmt {
         name: Name,
         indices: Vec<(Expr, usize)>,
         value: Expr,
+    },
+    CompoundAssign {
+        name: Name,
+        indices: Vec<(Expr, usize)>,
+        operator: AssignOp,
+        value: Expr,
+        line: usize,
+    },
+    Increment {
+        name: Name,
+        indices: Vec<(Expr, usize)>,
+        operator: IncrementOp,
+        line: usize,
     },
     If {
         condition: Expr,
@@ -187,19 +246,58 @@ impl Parser {
         Ok(statement)
     }
 
-    // Una asignación sin el ';' final, para reutilizarla dentro de un 'for'.
+    // Modificación de una variable ya declarada: asignación simple, asignación
+    // compuesta o incremento/decremento. Sin el ';' final, para reutilizarla
+    // dentro de un 'for'.
     fn assignment(&mut self) -> Result<Stmt, String> {
         let name = self.name()?;
         let mut indices = Vec::new();
         while self.peek().kind == TokenKind::LeftBracket {
             indices.push(self.index()?);
         }
-        self.consume(TokenKind::Equal, "Se esperaba '=' para asignar a una variable ya declarada. Para declararla hay que indicar su tipo.")?;
-        Ok(Stmt::Assign {
-            name,
-            indices,
-            value: self.expression()?,
-        })
+        let line = self.peek().line;
+        match self.peek().kind {
+            TokenKind::Equal => {
+                self.current += 1;
+                Ok(Stmt::Assign {
+                    name,
+                    indices,
+                    value: self.expression()?,
+                })
+            }
+            TokenKind::PlusEqual | TokenKind::MinusEqual => {
+                let operator = if self.peek().kind == TokenKind::PlusEqual {
+                    AssignOp::Add
+                } else {
+                    AssignOp::Subtract
+                };
+                self.current += 1;
+                Ok(Stmt::CompoundAssign {
+                    name,
+                    indices,
+                    operator,
+                    value: self.expression()?,
+                    line,
+                })
+            }
+            TokenKind::PlusPlus | TokenKind::MinusMinus => {
+                let operator = if self.peek().kind == TokenKind::PlusPlus {
+                    IncrementOp::Increment
+                } else {
+                    IncrementOp::Decrement
+                };
+                self.current += 1;
+                Ok(Stmt::Increment {
+                    name,
+                    indices,
+                    operator,
+                    line,
+                })
+            }
+            _ => Err(self.error(
+                "Se esperaba '=', '+=', '-=', '++' o '--' después del nombre para modificar una variable ya declarada. Para declararla hay que indicar su tipo.",
+            )),
+        }
     }
 
     fn declaration(&mut self) -> Result<Stmt, String> {

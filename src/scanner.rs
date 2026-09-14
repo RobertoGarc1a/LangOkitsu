@@ -37,6 +37,10 @@ pub enum TokenKind {
     Star,
     Slash,
     Percent,
+    PlusPlus,
+    PlusEqual,
+    MinusMinus,
+    MinusEqual,
     Literal(Value),
     // Conservamos los dígitos para que el parser pueda aceptar el mínimo de i64
     // junto con su signo: su magnitud positiva no cabe en un i64.
@@ -93,8 +97,18 @@ impl<'a> Scanner<'a> {
                         TokenKind::OrOr
                     }
                 }
-                '+' => TokenKind::Plus,
-                '-' => TokenKind::Minus,
+                '+' => self.compound_or_single(
+                    '+',
+                    TokenKind::PlusPlus,
+                    TokenKind::PlusEqual,
+                    TokenKind::Plus,
+                ),
+                '-' => self.compound_or_single(
+                    '-',
+                    TokenKind::MinusMinus,
+                    TokenKind::MinusEqual,
+                    TokenKind::Minus,
+                ),
                 '*' => TokenKind::Star,
                 '/' => TokenKind::Slash,
                 '%' => TokenKind::Percent,
@@ -134,6 +148,28 @@ impl<'a> Scanner<'a> {
             paired
         } else {
             single
+        }
+    }
+
+    // Distingue el operador doble ('++' o '--'), la variante con '=' ('+=' o '-=')
+    // y el signo aislado ('+' o '-'). Se mira un solo carácter por delante.
+    fn compound_or_single(
+        &mut self,
+        doubled: char,
+        doubled_kind: TokenKind,
+        equal_kind: TokenKind,
+        single: TokenKind,
+    ) -> TokenKind {
+        match self.chars.peek() {
+            Some(&c) if c == doubled => {
+                self.chars.next();
+                doubled_kind
+            }
+            Some(&'=') => {
+                self.chars.next();
+                equal_kind
+            }
+            _ => single,
         }
     }
 

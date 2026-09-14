@@ -14,6 +14,7 @@ cargo run -- examples/constantes.oki
 cargo run -- examples/arrays.oki
 cargo run -- examples/condiciones.oki
 cargo run -- examples/bucles.oki
+cargo run -- examples/asignaciones.oki
 ```
 
 Cargo compila el intérprete y lo ejecuta. El separador `--` hace que la ruta llegue al programa como argumento. Se usa el primer argumento; los adicionales se ignoran. `.oki` es la extensión del proyecto, pero no se comprueba la extensión.
@@ -245,6 +246,56 @@ true
 false
 ```
 
+## Asignaciones abreviadas
+
+Además de `nombre = expresión;`, una variable ya declarada se puede modificar con cuatro operadores abreviados. Son instrucciones: llevan `;` y no producen un valor, así que no se usan dentro de `println` ni como inicializador de una declaración.
+
+```oki
+int contador = 0;
+contador++;
+contador += 5;
+contador -= 3;
+contador--;
+println(contador);
+
+float precio = 10.0;
+precio += 2.5;
+println(precio);
+
+string mensaje = "Hola";
+mensaje += ", mundo";
+println(mensaje);
+
+int[] numeros = [1, 2, 3];
+numeros[0]++;
+numeros[1] += 10;
+numeros[2]--;
+println(numeros);
+```
+
+Produce `2`, `12.5`, `Hola, mundo` y `[2, 12, 2]`, cada uno en su línea.
+
+- `nombre += expresión;` equivale a `nombre = nombre + expresión;`, y `nombre -= expresión;` a `nombre = nombre - expresión;`. Siguen las mismas reglas de tipo que `+` y `-`: `+=` admite `int`, `float` y `string` (concatenación); `-=` admite `int` y `float`. `mensaje += 'x';` es un error, igual que `"a" + 'x'`.
+- `nombre++;` suma una unidad y `nombre--;` la resta. Solo se admiten sobre `int` o `float`, y la unidad conserva el tipo: en un `int` se suma `1` y en un `float`, `1.0`.
+- El destino puede ser una variable o un elemento de array, con los mismos índices que una asignación: `numeros[i + 1] += 2`, `tabla[0][1]--`. El índice debe ser `int` y estar dentro de los límites al ejecutar.
+- El nombre debe estar declarado y no puede ser constante. Cualquier forma abreviada sobre una constante se rechaza antes de ejecutar, igual que `limite = 0;`, incluso con el mismo valor o sobre un elemento: `a[0]++` con `const int[] a = [1];` falla.
+- No hay prefijo `++x`/`--x`, ni `*=`, `/=`, `%=` ni encadenamientos como `a += b -= 1;`. La actualización de un `for` admite estas formas: `for (int i = 0; i < 3; i++) { ... }`.
+- El desbordamiento de `int` y los resultados float no finitos se detectan al ejecutar y señalan la línea del operador, conservando la salida previa.
+
+El ejemplo [asignaciones.oki](../examples/asignaciones.oki) usa las cuatro formas sobre variables y elementos de array y produce:
+
+```text
+2
+7
+4
+3
+12.5
+11.5
+Hola, mundo
+[2, 12, 2]
+012
+```
+
 ## Control de flujo: if y else
 
 Un **if** elige qué bloque de instrucciones ejecutar según una condición de tipo `bool`. Las ramas van entre llaves y el `if` completo no lleva `;` final; cada instrucción de dentro sí lo lleva:
@@ -313,10 +364,10 @@ Produce `3`, `2`, `1` y `fin`, cada uno en su línea. La condición se evalúa a
 
 ### for
 
-`for (inicialización; condición; actualización) { ... }` reúne las tres partes en la cabecera, separadas por `;`. La inicialización admite una declaración (`int i = 0`) o una asignación a una variable ya declarada (`i = 0`); la condición es una expresión que debe ser `bool`; la actualización es una asignación. Las tres son obligatorias y no existen `++` ni `+=`, así que el avance se escribe `i = i + 1`:
+`for (inicialización; condición; actualización) { ... }` reúne las tres partes en la cabecera, separadas por `;`. La inicialización admite una declaración (`int i = 0`) o una asignación a una variable ya declarada (`i = 0`); la condición es una expresión que debe ser `bool`; la actualización es una asignación, una asignación abreviada o un incremento. Las tres son obligatorias, y el avance puede escribirse `i = i + 1`, `i += 1` o `i++`:
 
 ```oki
-for (int i = 0; i < 3; i = i + 1) {
+for (int i = 0; i < 3; i++) {
     println(i);
 }
 ```
@@ -372,7 +423,7 @@ Mar
 
 ## Límites de esta versión
 
-Todavía no hay conversión explícita de tipos, operaciones de bits, potencia, asignaciones compuestas (`+=`), incremento/decremento, acceso por índice a cadenas ni métodos de cadenas, comentarios ni funciones definidas por el usuario. Los bucles `while`, `for` y `foreach` no admiten `break` ni `continue`, y el `for` exige sus tres partes. No hay un bloque suelto ni una instrucción que declare un ámbito por sí misma más allá del cuerpo de un `if` o de un bucle. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
+Todavía no hay conversión explícita de tipos, operaciones de bits, potencia, acceso por índice a cadenas ni métodos de cadenas, comentarios ni funciones definidas por el usuario. Los bucles `while`, `for` y `foreach` no admiten `break` ni `continue`, y el `for` exige sus tres partes. Las asignaciones abreviadas `+=`, `-=`, `++` y `--` son instrucciones, no expresiones: no se usan dentro de `println` ni como valor de una declaración. No hay prefijos `++x`/`--x` ni el resto de operadores compuestos (`*=`, `/=`, `%=`). No hay un bloque suelto ni una instrucción que declare un ámbito por sí misma más allá del cuerpo de un `if` o de un bucle. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
 
 No existen `var`, `let`, `auto`, `any`, `null`, `void`, alias como `double` o `long`, tipos sin signo, otras colecciones, clases ni tipos definidos por el usuario. Se dispone de los cinco tipos básicos y arrays homogéneos, es decir, de elementos del mismo tipo. `print` y `println` siguen siendo instrucciones reservadas; sus paréntesis no implican un sistema general de llamadas.
 
@@ -380,7 +431,7 @@ La ejecución recorre un árbol de sintaxis. No se genera código máquina ni by
 
 ## Qué se comprueba
 
-Las 52 pruebas de [src/main.rs](../src/main.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Las cinco pruebas nuevas de bucles cubren el ejemplo `bucles.oki`, la repetición de `while`, el orden inicialización-condición-cuerpo-actualización del `for`, la actualización de elementos por índice, el ámbito propio del contador, la ocultación de nombres, el recorrido y la copia de elementos de `foreach` (incluidos arrays anidados y vacíos), la comprobación del tipo de elemento, el rechazo de `for` con constante y las condiciones y sintaxis inválidas de los tres bucles. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa.
+Las 61 pruebas de [src/main.rs](../src/main.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Las cinco pruebas nuevas de bucles cubren el ejemplo `bucles.oki`, la repetición de `while`, el orden inicialización-condición-cuerpo-actualización del `for`, la actualización de elementos por índice, el ámbito propio del contador, la ocultación de nombres, el recorrido y la copia de elementos de `foreach` (incluidos arrays anidados y vacíos), la comprobación del tipo de elemento, el rechazo de `for` con constante y las condiciones y sintaxis inválidas de los tres bucles. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa. Las seis pruebas nuevas de asignaciones abreviadas cubren el ejemplo `asignaciones.oki`, el incremento y decremento de `int` y `float`, `+=` y `-=` con los tipos admitidos, la actualización de elementos de array (también anidados), el uso en la cabecera del `for`, el rechazo de constantes, las combinaciones de tipos incompatibles, la sintaxis incompleta (incluido el prefijo `++x`, que no se admite) y el desbordamiento en ejecución.
 
 ```sh
 cargo fmt -- --check

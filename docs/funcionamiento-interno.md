@@ -73,7 +73,7 @@ Los tokens son:
 
 El scanner reconoce además `[` (`LeftBracket`), `]` (`RightBracket`) y `,` (`Comma`), para tipos de array, literales y accesos. El parser decide qué función cumplen según dónde aparezcan.
 
-El scanner también reconoce los operadores `+`, `-`, `*`, `/`, `%`, `!`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&` y `||`. `paired()` mira si un signo lleva un segundo `=`: así distingue la asignación `=` de la igualdad `==`. Un `&` o `|` aislado se rechaza. El signo del exponente sigue perteneciendo al número (`1e-2`), mientras que en `2-1` el menos es un token independiente.
+El scanner también reconoce los operadores `+`, `-`, `*`, `/`, `%`, `!`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&` y `||`, además de `++`, `--`, `+=` y `-=`. `paired()` mira si un signo lleva un segundo `=`: así distingue la asignación `=` de la igualdad `==`. `compound_or_single()` mira un carácter por delante de `+` o `-` y decide entre el operador doble (`++`, `--`), la variante con `=` (`+=`, `-=`) y el signo aislado. Un `&` o `|` aislado se rechaza. El signo del exponente sigue perteneciendo al número (`1e-2`), mientras que en `2-1` el menos es un token independiente. Como `--` es ahora un token propio, `1--2` ya no significa `1 - (-2)` y se rechaza.
 
 El scanner comprueba la forma del literal numérico; no comprueba declaraciones ni imprime nada.
 
@@ -91,7 +91,8 @@ forStmt     → "for" "(" (declaration | assignment) ";" expression ";" assignme
 foreachStmt → "foreach" "(" type IDENTIFIER "in" expression ")" block
 block       → "{" statement* "}"
 declaration → "const"? type IDENTIFIER "=" expression
-assignment  → IDENTIFIER ("[" expression "]")* "=" expression
+assignment  → IDENTIFIER ("[" expression "]")* assignTail
+assignTail  → "=" expression | "+=" expression | "-=" expression | "++" | "--"
 printStmt   → ("print" | "println") "(" expression ")"
 type        → basicType ("[" "]")*
 basicType   → "int" | "float" | "bool" | "char" | "string"
@@ -108,14 +109,14 @@ primary     → STRING | CHAR | "true" | "false" | NUMBER | IDENTIFIER
             | "(" expression ")" | "[" (expression ("," expression)*)? "]"
 ```
 
-`→` significa «se compone de», `|` indica alternativas, `*` permite cero o más repeticiones y `?` indica una parte opcional. `STRING`, `CHAR` y los booleanos son variantes del token `Literal`; `NUMBER` corresponde al token `Number`. El `;` que separa las tres partes de un `for` no pertenece a `declaration` ni a `assignment`: la sentencia simple lo añade al final y `for_statement()` lo exige entre partes.
+`→` significa «se compone de», `|` indica alternativas, `*` permite cero o más repeticiones y `?` indica una parte opcional. `STRING`, `CHAR` y los booleanos son variantes del token `Literal`; `NUMBER` corresponde al token `Number`. El `;` que separa las tres partes de un `for` no pertenece a `declaration` ni a `assignment`: la sentencia simple lo añade al final y `for_statement()` lo exige entre partes. `assignTail` reúne las cuatro modificaciones de una variable ya declarada: asignación, asignación compuesta e incremento/decremento.
 
 La forma léxica de `NUMBER` es `dígitos ("." dígitos)? (("e" | "E") ("+" | "-")? dígitos)?`. Cada grupo de dígitos contiene al menos uno; el signo inicial se maneja en `unary()`.
 
 1. `parse()` recoge instrucciones hasta `Eof`.
-2. `statement()` distingue por el primer token las sentencias simples (declaración, asignación, impresión), que exigen el `;` final, y las que terminan en `}` ( `if`, `while`, `for` y `foreach`), que no lo llevan. `declaration()` consume el `const` opcional, delega el tipo en `array_type()` y recoge nombre e inicializador. `assignment()` recoge el nombre, los índices opcionales y el valor; se separa de `statement()` para poder reutilizarla en la cabecera de un `for`. `array_type()` consume el tipo básico y envuelve cada par `[]` en `Type::Array`.
+2. `statement()` distingue por el primer token las sentencias simples (declaración, modificación de variable, impresión), que exigen el `;` final, y las que terminan en `}` ( `if`, `while`, `for` y `foreach`), que no lo llevan. `declaration()` consume el `const` opcional, delega el tipo en `array_type()` y recoge nombre e inicializador. `assignment()` recoge el nombre y los índices opcionales y, según el token siguiente, construye una asignación (`=`), una asignación compuesta (`+=`, `-=`) o un incremento/decremento (`++`, `--`); se separa de `statement()` para poder reutilizarla en la cabecera de un `for`. `array_type()` consume el tipo básico y envuelve cada par `[]` en `Type::Array`.
 3. `if_statement()` consume `if`, exige la condición entre paréntesis y analiza un bloque. Si aparece `else`, analiza otro bloque o encadena un `if` anidado. `block()` recoge instrucciones hasta `}` y avisa si se alcanza el final del archivo.
-4. `while_statement()` consume `while`, exige la condición y un bloque. `for_statement()` exige `(`, analiza como inicialización una declaración o una asignación, y a continuación la condición y la actualización separadas por `;`, la actualización siempre como asignación. `foreach_statement()` exige el tipo, el nombre, la palabra reservada `in`, el array y un bloque.
+4. `while_statement()` consume `while`, exige la condición y un bloque. `for_statement()` exige `(`, analiza como inicialización una declaración o una modificación de variable, y a continuación la condición y la actualización separadas por `;`; la actualización admite asignación, asignación compuesta o incremento. `foreach_statement()` exige el tipo, el nombre, la palabra reservada `in`, el array y un bloque.
 5. `name()` exige un identificador y conserva su texto y línea en `Name`.
 6. `print_statement()` exige los paréntesis alrededor de una expresión.
 7. `expression()` baja por niveles de precedencia: `or()`, `and()`, `equality()`, `comparison()`, `term()`, `factor()`, `unary()`, `postfix()` y `primary()`.
@@ -144,6 +145,8 @@ Expr
 Stmt
 ├── Declare { declared_type, is_constant, name, initializer }
 ├── Assign { name, indices: Vec<(Expr, línea)>, value }
+├── CompoundAssign { name, indices, operator: AssignOp, value, line }
+├── Increment { name, indices, operator: IncrementOp, line }
 ├── If { condition, then_branch: Vec<Stmt>, else_branch: Option<Vec<Stmt>>, line }
 ├── While { condition, body: Vec<Stmt>, line }
 ├── For { initializer: Box<Stmt>, condition, update: Box<Stmt>, body: Vec<Stmt>, line }
@@ -152,7 +155,7 @@ Stmt
 └── Println(Expr)
 ```
 
-Cada rama de un `if` y cada cuerpo de bucle es un `Vec<Stmt>`: la lista de instrucciones de su bloque. `else_branch` guarda `None` si no hay `else`; un `else if` queda como un `Vec` con un único `Stmt::If` interior. En `For`, `initializer` y `update` son instrucciones completas (`Declare` o `Assign`), guardadas en `Box` para no dar un tamaño infinito al enum.
+Cada rama de un `if` y cada cuerpo de bucle es un `Vec<Stmt>`: la lista de instrucciones de su bloque. `else_branch` guarda `None` si no hay `else`; un `else if` queda como un `Vec` con un único `Stmt::If` interior. En `For`, `initializer` y `update` son instrucciones completas (`Declare`, `Assign`, `CompoundAssign` o `Increment`), guardadas en `Box` para no dar un tamaño infinito al enum. `AssignOp` distingue `+=` de `-=` e `IncrementOp`, `++` de `--`; cada uno sabe qué operación binaria equivale a la forma abreviada.
 
 Para el ejemplo:
 
@@ -182,7 +185,9 @@ El parser copia el contenido de los tokens al árbol. Para evaluar un literal, e
 `check()` abre el ámbito global y recorre las instrucciones en orden:
 
 - En una declaración, rechaza nombres repetidos, obtiene el tipo del inicializador usando el tipo declarado como contexto y exige que coincida con el declarado. Solo entonces registra el nombre junto con su tipo y la marca `is_constant`. Así `int x = x;` falla: `x` todavía no está disponible.
-- En una asignación, busca la información del nombre y rechaza la operación si `is_constant` es `true`, incluso si el valor no cambiaría. Para las demás variables, resuelve el tipo del destino: sin índices es el declarado; cada índice exige un array y un `int`, y desciende al tipo de elemento. Compara ese tipo con el de la expresión asignada y lo proporciona como contexto para arrays vacíos. No cambia el tipo almacenado ni declara variables nuevas.
+- En una asignación, busca la información del nombre y rechaza la operación si `is_constant` es `true`, incluso si el valor no cambiaría. Para las demás variables, resuelve el tipo del destino: sin índices es el declarado; cada índice exige un array y un `int`, y desciende al tipo de elemento. Compara ese tipo con el de la expresión asignada y lo proporciona como contexto para arrays vacíos. No cambia el tipo almacenado ni declara variables nuevas. `assignment_target()` reúne la búsqueda, el rechazo de constantes y el recorrido de índices; lo comparten la asignación, la compuesta y el incremento.
+- En una asignación compuesta (`+=`, `-=`), obtiene el tipo del destino como en una asignación y el de la derecha, y aplica las reglas de `+` o `-` mediante `binary_result()`. El destino debe admitir la operación con el tipo de la derecha: `+=` vale para `int`, `float` y `string`, y `-=` para `int` y `float`. El error señala la línea del operador.
+- En un incremento o decremento (`++`, `--`), el destino debe ser `int` o `float`; no hay operando derecho que comprobar. El paso de una unidad se decide al ejecutar a partir del tipo del destino.
 - En una impresión, comprueba que la expresión sea válida; una referencia debe existir previamente.
 - En un `if`, obtiene el tipo de la condición y exige `Bool` (si no, el error señala la línea del `if`). Después abre un ámbito para la rama `then` y lo cierra al terminar. Si hay `else`, repite el proceso con su propia lista de instrucciones, de modo que las dos ramas se comprueban aunque solo se vaya a ejecutar una. `check_block()` hace el `push` y el `pop` del ámbito; declarar un nombre solo comprueba duplicados en el ámbito actual, así que se permite reutilizar el nombre en un bloque interior.
 - En un `while`, exige que la condición sea `Bool` (error en la línea del `while`) y comprueba el cuerpo en un ámbito nuevo.
@@ -213,13 +218,13 @@ El tipo explícito obligatorio, la compatibilidad exacta y la comprobación prev
 
 `indexed_type()` exige `Type::Array` en el objeto y `Type::Int` en el índice, tanto para `Expr::Index` como para cada índice de `Stmt::Assign`. Devuelve el tipo del elemento. No comprueba límites aquí: la longitud y el índice son valores de ejecución. La marca `is_constant` se comprueba antes de recorrer los índices y protege todo el valor, incluidos arrays interiores.
 
-En `Unary` y `Binary`, `expression_type()` comprueba recursivamente los operandos y aplica las reglas de cada operador. Exige igualdad de tipos entre ambos operandos; aritmética conserva el tipo numérico, concatenación produce `String`, y comparaciones y lógica producen `Bool`. La igualdad y desigualdad admiten arrays del mismo tipo; las demás operaciones no admiten arrays completos. Comprueba ambos lados de `&&` y `||` aunque después pueda omitirse uno. Así `true || desconocida` y `false && 1` fallan antes de emitir salida.
+En `Unary` y `Binary`, `expression_type()` comprueba recursivamente los operandos y aplica las reglas de cada operador. Exige igualdad de tipos entre ambos operandos; aritmética conserva el tipo numérico, concatenación produce `String`, y comparaciones y lógica producen `Bool`. La igualdad y desigualdad admiten arrays del mismo tipo; las demás operaciones no admiten arrays completos. Comprueba ambos lados de `&&` y `||` aunque después pueda omitirse uno. Así `true || desconocida` y `false && 1` fallan antes de emitir salida. Las reglas comunes viven en `binary_result()`, que devuelve `None` cuando los operandos no comparten tipo o el operador no los admite; la asignación compuesta la reutiliza con `+` o `-`.
 
 ## 6. Intérprete y entorno de valores
 
 [interpreter.rs](../src/interpreter.rs) contiene `Interpreter<W: Write>`. Recibe un programa validado y guarda otro entorno: ahora una pila de ámbitos `Vec<HashMap<String, Value>>`, porque los bloques de un `if` o de un bucle pueden anidarse. El primer mapa es el ámbito global.
 
-`interpret()` llama a `execute()` para cada instrucción. Una declaración evalúa el inicializador y guarda el resultado en el ámbito actual (el último de la pila). Una asignación busca el ámbito que contiene el nombre, resuelve primero el destino y comprueba todos sus índices de izquierda a derecha; después evalúa el nuevo valor y sustituye el anterior. Si falla un índice o la expresión asignada, no modifica el destino. `evaluate()` devuelve una copia del literal o del valor consultado; esto también copia el contenido de las cadenas y de todos los arrays anidados, y evita que dos variables compartan cambios. Para consultar una variable se recorre la pila de dentro hacia fuera, de modo que un nombre declarado en un bloque oculta al de un ámbito exterior mientras dura.
+`interpret()` llama a `execute()` para cada instrucción. Una declaración evalúa el inicializador y guarda el resultado en el ámbito actual (el último de la pila). Una asignación busca el ámbito que contiene el nombre, resuelve primero el destino y comprueba todos sus índices de izquierda a derecha; después evalúa el nuevo valor y sustituye el anterior. Si falla un índice o la expresión asignada, no modifica el destino. `resolve_target()` devuelve el ámbito y las posiciones ya validadas, y `write_target()` escribe en ellas; entre ambos, `target_value()` obtiene una copia del valor actual. Una asignación compuesta evalúa la derecha, aplica `binary()` con el operando actual y escribe el resultado; un incremento usa `1` o `1.0` como paso según el tipo del destino. Si la operación desborda, no se escribe nada. `evaluate()` devuelve una copia del literal o del valor consultado; esto también copia el contenido de las cadenas y de todos los arrays anidados, y evita que dos variables compartan cambios. Para consultar una variable se recorre la pila de dentro hacia fuera, de modo que un nombre declarado en un bloque oculta al de un ámbito exterior mientras dura.
 
 Un `Stmt::If` evalúa su condición y, según sea `true` o `false`, ejecuta el bloque `then` o el `else`. `execute_block()` abre un ámbito con `push`, ejecuta sus instrucciones y lo cierra con `pop`; si una instrucción falla, el error se propaga y el programa se detiene. Como el comprobador ya garantizó que las condiciones son `bool`, el intérprete no repite esa comprobación de tipos.
 
@@ -298,6 +303,30 @@ El comprobador obtiene `Int` para la multiplicación y para la suma, y registra 
 
 La aritmética entera usa operaciones `checked_*`, que devuelven un fallo en lugar de provocar un pánico de Rust o envolver el resultado fuera de rango. El resto por `-1` se resuelve como cero incluso para el mínimo de `i64`, evitando el desbordamiento del cociente intermedio. Para float se comprueba `is_finite()` después de operar. En ambos tipos se rechaza primero el divisor cero en `/` y `%`. La concatenación combina el contenido de dos cadenas; las comparaciones usan sus valores y el orden Unicode, y devuelven `Value::Bool`.
 
+### Recorrido de una asignación abreviada
+
+Con la entrada:
+
+```oki
+int contador = 0;
+contador++;
+contador += 5;
+contador -= 3;
+println(contador);
+```
+
+El scanner produce `Type(Int), Identifier("contador"), Equal, Number("0"), Semicolon` y, en las líneas siguientes, `Identifier("contador"), PlusPlus, Semicolon`; `Identifier("contador"), PlusEqual, Number("5"), Semicolon`; e `Identifier("contador"), MinusEqual, Number("3"), Semicolon`. El parser construye:
+
+```text
+Declare(contador, Int, Literal(Int(0)))
+Increment(contador, IncrementOp::Increment, línea 2)
+CompoundAssign(contador, AssignOp::Add, Literal(Int(5)), línea 3)
+CompoundAssign(contador, AssignOp::Subtract, Literal(Int(3)), línea 4)
+Println(Variable(contador))
+```
+
+El comprobador registra `contador → Int`, comprueba que el incremento admite `int` y que las dos asignaciones compuestas aplican `+`/`-` sobre `int` con un operando del mismo tipo. El intérprete guarda `contador → Int(0)`; en la línea 2 lee `0`, calcula `0 + 1` y escribe `1`; en la 3 calcula `1 + 5` y escribe `6`; en la 4 calcula `6 - 3` y escribe `3`. La impresión produce `3` con salto final. `contador++` equivale a `contador = contador + 1`; el paso cambia a `1.0` solo si el destino es `float`.
+
 ### Recorrido de un if
 
 Con la entrada:
@@ -374,7 +403,7 @@ Cada llamada a `run()` crea sus dos entornos con un único ámbito global. Los b
 | Lectura | Ruta ausente, archivo inexistente o contenido que no es UTF-8. | Error antes del análisis. |
 | Scanner | Comillas sin cerrar, `char` vacío o múltiple, exponente incompleto. | Error con línea. |
 | Parser | Falta un tipo válido, nombre, inicializador, paréntesis, corchete, llave, coma entre elementos o `;`; en los bucles, falta alguna de las tres partes del `for` o la palabra `in` del `foreach`; número fuera de rango. | Error con línea. |
-| Comprobación de tipos | Variable desconocida, declaración duplicada, tipo incompatible, elementos de tipos distintos, índice que no es `int`, vacío sin contexto, condición de `if`/`while`/`for` que no es `bool`, `foreach` que no recorre un array o cuyo tipo de elemento no coincide, o reasignación de una constante. | Error con línea, antes de ejecutar. |
+| Comprobación de tipos | Variable desconocida, declaración duplicada, tipo incompatible, elementos de tipos distintos, índice que no es `int`, vacío sin contexto, condición de `if`/`while`/`for` que no es `bool`, `foreach` que no recorre un array o cuyo tipo de elemento no coincide, reasignación de una constante, o `+=`/`-=`/`++`/`--` sobre un destino que no admite la operación. | Error con línea, antes de ejecutar. |
 | Intérprete | Índice de array fuera de rango, división/resto por cero o resultado numérico fuera de rango; fallo al escribir. | Error con línea del corchete para índices o del operador para errores numéricos; se propaga el error de entrada/salida para escritura. |
 
 Los errores propios del lenguaje usan `String`; la escritura y lectura pueden producir `io::Error`. `run()` los propaga mediante `Box<dyn Error>`, que admite distintos tipos de error. `main()` escribe el mensaje en `stderr` con el prefijo `Error:` y termina con código de fallo.

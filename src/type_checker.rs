@@ -65,19 +65,41 @@ impl TypeChecker {
                 indices,
                 value,
             } => {
-                let expected = self.lookup(name)?;
-                if expected.is_constant {
-                    return Err(name.error(&format!(
-                        "No se puede reasignar la constante '{}'.",
-                        name.text
-                    )));
-                }
-                let mut target_type = expected.declared_type.clone();
-                for (index, line) in indices {
-                    target_type = self.indexed_type(target_type, index, *line)?;
-                }
+                let target_type = self.assignment_target(name, indices)?;
                 let actual = self.expression_type_expected(value, Some(&target_type))?;
                 Self::require_type(name, &target_type, &actual)?;
+            }
+            Stmt::CompoundAssign {
+                name,
+                indices,
+                operator,
+                value,
+                line,
+            } => {
+                let target_type = self.assignment_target(name, indices)?;
+                let operand_type = self.expression_type_expected(value, Some(&target_type))?;
+                Self::binary_result(&target_type, operator.binary(), &operand_type).ok_or_else(
+                    || {
+                        format!(
+                            "Línea {line}: el operador '{}' no admite {target_type} y {operand_type}. No hay conversiones implícitas.",
+                            operator.symbol()
+                        )
+                    },
+                )?;
+            }
+            Stmt::Increment {
+                name,
+                indices,
+                operator,
+                line,
+            } => {
+                let target_type = self.assignment_target(name, indices)?;
+                if !matches!(target_type, Type::Int | Type::Float) {
+                    return Err(format!(
+                        "Línea {line}: el operador '{}' no admite {target_type}.",
+                        operator.symbol()
+                    ));
+                }
             }
             Stmt::If {
                 condition,
@@ -245,34 +267,54 @@ impl TypeChecker {
                 // deben tener nombres y tipos válidos antes de ejecutar.
                 let left = self.expression_type(left)?;
                 let right = self.expression_type(right)?;
-                let numeric = matches!(left, Type::Int | Type::Float);
-                let result = match operator {
-                    BinaryOp::Add if numeric || left == Type::String => Some(left.clone()),
-                    BinaryOp::Subtract
-                    | BinaryOp::Multiply
-                    | BinaryOp::Divide
-                    | BinaryOp::Remainder
-                        if numeric =>
-                    {
-                        Some(left.clone())
-                    }
-                    BinaryOp::Equal | BinaryOp::NotEqual => Some(Type::Bool),
-                    BinaryOp::Less
-                    | BinaryOp::LessEqual
-                    | BinaryOp::Greater
-                    | BinaryOp::GreaterEqual
-                        if numeric || matches!(left, Type::Char | Type::String) =>
-                    {
-                        Some(Type::Bool)
-                    }
-                    BinaryOp::And | BinaryOp::Or if left == Type::Bool => Some(Type::Bool),
-                    _ => None,
-                };
-                result.filter(|_| left == right).ok_or_else(|| format!(
-                    "Línea {line}: el operador '{}' no admite {left} y {right}. No hay conversiones implícitas.", operator.symbol()
-                ))
+                Self::binary_result(&left, *operator, &right).ok_or_else(|| {
+                    format!(
+                        "Línea {line}: el operador '{}' no admite {left} y {right}. No hay conversiones implícitas.",
+                        operator.symbol()
+                    )
+                })
             }
         }
+    }
+
+    // Reglas de tipos de un operador binario. Devuelve None si los operandos no
+    // son compatibles o no tienen el mismo tipo. Lo reutiliza `+=` y `-=`.
+    fn binary_result(left: &Type, operator: BinaryOp, right: &Type) -> Option<Type> {
+        let numeric = matches!(left, Type::Int | Type::Float);
+        let result = match operator {
+            BinaryOp::Add if numeric || *left == Type::String => Some(left.clone()),
+            BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Remainder
+                if numeric =>
+            {
+                Some(left.clone())
+            }
+            BinaryOp::Equal | BinaryOp::NotEqual => Some(Type::Bool),
+            BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual
+                if numeric || matches!(left, Type::Char | Type::String) =>
+            {
+                Some(Type::Bool)
+            }
+            BinaryOp::And | BinaryOp::Or if *left == Type::Bool => Some(Type::Bool),
+            _ => None,
+        };
+        result.filter(|_| left == right)
+    }
+
+    // Tipo del destino de una asignación, rechazando constantes y comprobando
+    // cada índice. Lo comparten la asignación, la compuesta y el incremento.
+    fn assignment_target(&self, name: &Name, indices: &[(Expr, usize)]) -> Result<Type, String> {
+        let info = self.lookup(name)?;
+        if info.is_constant {
+            return Err(name.error(&format!(
+                "No se puede reasignar la constante '{}'.",
+                name.text
+            )));
+        }
+        let mut target_type = info.declared_type.clone();
+        for (index, line) in indices {
+            target_type = self.indexed_type(target_type, index, *line)?;
+        }
+        Ok(target_type)
     }
 
     fn indexed_type(&self, array: Type, index: &Expr, line: usize) -> Result<Type, String> {
