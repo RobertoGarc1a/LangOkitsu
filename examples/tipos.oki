@@ -1,0 +1,15 @@
+int edad = 25;
+float precio = 19.95;
+bool activo = true;
+char inicial = 'ñ';
+string saludo = "Hola";
+
+println(edad);
+println(precio);
+println(activo);
+println(inicial);
+println(saludo);
+
+edad = 26;
+int copia = edad;
+println(copia);

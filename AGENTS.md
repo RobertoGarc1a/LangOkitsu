@@ -6,7 +6,7 @@ Estas pautas se aplican a todo el repositorio. El proyecto sirve para aprender a
 
 - Implementar únicamente la funcionalidad solicitada por el usuario. Las posibles ampliaciones descritas en la documentación no son tareas autorizadas.
 - Seguir el enfoque de *Crafting Interpreters*, adaptándolo a Rust y a las decisiones de sintaxis de OkitsuLang. No copiar automáticamente todas las características de Lox.
-- La única instrucción disponible actualmente es `print("texto")`. Conservar esta sintaxis salvo que el usuario pida cambiarla.
+- Las instrucciones disponibles son `print("texto");` (sin salto final) y `println("texto");` (con salto final). El punto y coma es obligatorio. Conservar esta sintaxis salvo que el usuario pida cambiarla.
 - Mantener separadas las responsabilidades de scanner, parser, AST e intérprete. No sustituir estas etapas por comprobaciones del texto completo.
 - Priorizar código sencillo y comprensible. Se puede mantener todo en `src/main.rs` mientras resulte manejable; separar módulos cuando el crecimiento lo justifique.
 - Evitar dependencias y abstracciones sin una necesidad concreta. El rendimiento es un objetivo futuro: no asumir que usar Rust basta para que el lenguaje sea rápido ni adelantar una máquina virtual sin que forme parte de la tarea.
@@ -31,7 +31,7 @@ Estas pautas se aplican a todo el repositorio. El proyecto sirve para aprender a
 
 - Para cambios de comportamiento, añadir o ajustar pruebas que comprueben resultados observables y errores relevantes. Conservar la prueba de `hello.oki`.
 - Tras modificar Rust, ejecutar `cargo fmt -- --check`, `cargo test` y `cargo clippy --all-targets -- -D warnings`. Si el formato falla, aplicar `cargo fmt` y volver a comprobarlo.
-- Si cambia la lectura del archivo o la ejecución, comprobar también `cargo run -- hello.oki`.
+- Si cambia la lectura del archivo o la ejecución, comprobar también `cargo run -- examples/hello.oki`.
 - Para cambios exclusivamente documentales, revisar los enlaces locales, ejemplos y concordancia con el código; no hace falta añadir pruebas ni recompilar.
 - Si una comprobación no se puede ejecutar, indicar cuál y por qué. No presentarla como superada.
 - En la entrega, resumir qué se hizo, dónde se explica y cómo se verificó. El usuario debe poder entender cada avance a partir de los archivos del proyecto.

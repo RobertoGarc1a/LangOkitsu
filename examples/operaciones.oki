@@ -1,0 +1,18 @@
+int total = 2 + 3 * 4;
+println(total);
+total = (2 + 3) * 4;
+println(total);
+println(7 / 2);
+println(7 % 2);
+
+float mitad = 7.0 / 2.0;
+println(mitad);
+bool valido = total >= 20 && !(mitad < 3.0);
+println(valido);
+
+char inicial = 'a';
+println(inicial < 'z');
+string saludo = "Hola" + ", " + "mundo";
+println(saludo);
+println(saludo == "Hola, mundo");
+println(false && 1 / 0 == 0);

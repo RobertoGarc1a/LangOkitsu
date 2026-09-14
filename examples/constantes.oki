@@ -1,0 +1,16 @@
+int base = 5;
+const int limite = base * 2;
+const float precio = 19.95;
+const bool activo = true;
+const char inicial = 'ñ';
+const string saludo = "Hola" + " mundo";
+
+base = 6;
+int copia = limite;
+copia = copia + 1;
+println(limite);
+println(copia);
+println(precio);
+println(activo);
+println(inicial);
+println(saludo);

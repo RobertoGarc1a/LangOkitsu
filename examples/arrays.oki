@@ -1,0 +1,15 @@
+int[] numeros = [1, 2, 3];
+println(numeros);
+numeros[1] = numeros[0] + 9;
+println(numeros[1]);
+int[] copia = numeros;
+copia[0] = 99;
+println(numeros);
+println(copia);
+string[] nombres = ["Ana", "世界"];
+println(nombres);
+int[] vacio = [];
+println(vacio);
+const int[][] tabla = [[1, 2], [3]];
+println(tabla[1][0]);
+println(numeros == [1, 10, 3]);

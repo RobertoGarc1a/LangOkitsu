@@ -1,69 +1,278 @@
 # Qué está implementado
 
-OkitsuLang lee un archivo de texto y ejecuta instrucciones que imprimen cadenas. Está escrito en Rust, usa la edición 2024 y no tiene dependencias externas. Toda la implementación y sus pruebas están en [src/main.rs](../src/main.rs).
+OkitsuLang lee un archivo UTF-8, comprueba el programa completo y ejecuta declaraciones, asignaciones e instrucciones de impresión. Está escrito en Rust, usa la edición 2024 y no tiene dependencias externas.
 
 ## Cómo probarlo
 
-Con Rust y Cargo disponibles, ejecutar desde la raíz del proyecto:
+Desde la raíz del proyecto:
 
 ```sh
-cargo run -- hello.oki
+cargo run -- examples/hello.oki
+cargo run -- examples/tipos.oki
+cargo run -- examples/operaciones.oki
+cargo run -- examples/constantes.oki
+cargo run -- examples/arrays.oki
 ```
 
-Cargo compila el intérprete y lo ejecuta. El separador `--` hace que `hello.oki` se pase al programa como argumento.
+Cargo compila el intérprete y lo ejecuta. El separador `--` hace que la ruta llegue al programa como argumento. Se usa el primer argumento; los adicionales se ignoran. `.oki` es la extensión del proyecto, pero no se comprueba la extensión.
 
-El archivo [hello.oki](../hello.oki) contiene:
+Se conserva [hello.oki](../examples/hello.oki) con el contenido actual del usuario:
 
 ```oki
-print("Hello world")
+print("Hello ");
+println("World");
 ```
 
-La salida del programa es:
+Produce `Hello World` seguido de un salto de línea.
+
+El ejemplo [tipos.oki](../examples/tipos.oki) declara los cinco tipos, imprime sus valores y copia una variable después de reasignarla. Su salida es:
 
 ```text
-Hello world
+25
+19.95
+true
+ñ
+Hola
+26
 ```
 
-También se puede indicar otra ruta. El programa lee el primer argumento como ruta de un archivo UTF-8; `.oki` es la extensión que usamos, pero el código todavía no comprueba la extensión. Los argumentos adicionales se ignoran.
+## Tipos básicos
 
-## Reglas actuales
+| Tipo | Representación | Ejemplos de valores |
+| --- | --- | --- |
+| `int` | Entero de 64 bits con signo (`i64` en Rust), de −9223372036854775808 a 9223372036854775807. | `0`, `25`, `-7` |
+| `float` | Número de coma flotante de 64 bits (`f64`), con precisión aproximada. | `0.0`, `19.95`, `-2.5`, `1e3`, `2.5E-2` |
+| `bool` | Valor lógico. | `true`, `false` |
+| `char` | Exactamente un valor escalar Unicode entre comillas simples. | `'a'`, `'ñ'`, `'界'`, `'🦀'` |
+| `string` | Cadena Unicode entre comillas dobles, de longitud variable. | `"Hola"`, `""` |
+
+Un **valor escalar Unicode** es una unidad de texto como la que representa `char` en Rust. Un símbolo visible puede estar compuesto por varias unidades: una `e` seguida de un acento combinante no cabe en un único `char`; la `é` precompuesta sí. Las cadenas pueden contener varias unidades.
+
+Los números se escriben en decimal. Un literal con punto o exponente es `float`; sin ambos es `int`. Debe haber dígitos antes y después del punto: usar `0.5` y `1.0`, no `.5` ni `1.`. El exponente lleva dígitos y puede tener signo. Los signos unarios `+` y `-` se aplican a literales, variables o expresiones agrupadas, también separados por espacios: `-precio`, `+(2 + 3)`. No se aceptan prefijos hexadecimales ni separadores `_`.
+
+Se rechazan los enteros fuera de rango y los literales float que se convierten en infinito. Los float siguen el redondeo de `f64`: pueden perder precisión y los valores demasiado pequeños pueden redondearse a cero. No hay literales especiales para infinito o NaN. Al imprimir se conserva la distinción `1` frente a `1.0`; se puede utilizar notación científica para float. Los booleanos se imprimen como `true` o `false`; cadenas y caracteres se imprimen sin sus comillas.
+
+## Variables con tipo obligatorio
+
+```oki
+int edad = 25;
+int copia = edad;
+edad = 26;
+println(copia);
+println(edad);
+```
+
+Produce `25` y `26`, cada uno en su línea. La copia guarda el valor de ese momento; las reasignaciones posteriores no la modifican.
+
+- La declaración tiene la forma `tipo nombre = expresión;`, con `const` opcional antes del tipo para impedir reasignaciones. El tipo y el valor inicial son obligatorios; no se crean valores por defecto.
+- La reasignación tiene la forma `nombre = expresión;`, o `nombre[índice] = expresión;` para un elemento de array. Solo se permite para variables ya declaradas sin `const` y conserva su tipo. No es una declaración nueva.
+- El tipo debe coincidir exactamente tanto al declarar como al reasignar. No se convierte automáticamente entre `int` y `float`, entre `char` y `string`, ni entre ningún otro par de tipos.
+- Las variables deben declararse antes de usarlas. No se permite `int x = x;`, ni declarar dos veces el mismo nombre.
+- Solo existe un ámbito global por archivo: una tabla de nombres disponible durante esa ejecución. Cada ejecución empieza vacía.
+- Los nombres empiezan por letra ASCII o `_`, y continúan con letras ASCII, dígitos o `_`. Distinguen mayúsculas de minúsculas.
+- `int`, `float`, `bool`, `char`, `string`, `const`, `true`, `false`, `print` y `println` son palabras reservadas. Nombres como `int2` o `println2` sí se permiten.
+
+Estos fragmentos son **inválidos**:
+
+```oki
+edad = 25;
+```
+
+Falta declarar `edad` con su tipo.
+
+```oki
+float precio = 25;
+```
+
+El inicializador es `int`; debe escribirse `25.0` para que sea `float`.
+
+```oki
+int edad = 25;
+edad = "veinticinco";
+```
+
+Una variable `int` no puede recibir un `string`.
+
+## Constantes
+
+Una **constante** es una variable cuyo valor no se puede cambiar después de inicializarla. Se declara con `const tipo nombre = expresión;`:
+
+```oki
+int base = 5;
+const int limite = base * 2;
+base = 6;
+int copia = limite;
+copia = copia + 1;
+println(limite);
+println(copia);
+```
+
+Produce `10` y `11`, cada uno en su línea. El inicializador se evalúa una sola vez al ejecutar la declaración y puede usar expresiones y nombres anteriores. Cambiar `base` o una copia no cambia `limite`: no es una fórmula que se vuelva a calcular.
+
+- Se admite `const` con `int`, `float`, `bool`, `char`, `string` y arrays de estos tipos, también anidados. En un array constante tampoco se permite cambiar ningún elemento o subarray. El tipo y el inicializador son obligatorios y deben coincidir exactamente.
+- Se pueden leer constantes en operaciones, impresiones e inicializadores de otras variables o constantes.
+- Cualquier reasignación está prohibida, incluso con el mismo valor: `limite = 10;` y `limite = limite;` son errores. No se puede convertir una variable ya declarada en constante ni volver a declarar el mismo nombre.
+- El error señala la línea del nombre asignado y se detecta antes de ejecutar cualquier instrucción del archivo. Las declaraciones sin `const` conservan su comportamiento anterior.
+
+Este programa es **inválido** y no imprime nada:
+
+```oki
+const int limite = 10;
+println(limite);
+limite = 20;
+```
+
+```text
+Línea 3: No se puede reasignar la constante 'limite'.
+```
+
+El ejemplo [constantes.oki](../examples/constantes.oki) usa los cinco tipos y produce:
+
+```text
+10
+11
+19.95
+true
+ñ
+Hola mundo
+```
+
+## Arrays
+
+Un **array** es una secuencia ordenada de elementos del mismo tipo. Se añade `[]` al tipo del elemento y se escriben los valores entre corchetes, separados por comas:
+
+```oki
+int[] numeros = [1, 2 + 3, 7];
+println(numeros);
+numeros[0] = numeros[1] * 2;
+println(numeros[0]);
+int[] copia = numeros;
+copia[1] = 99;
+println(numeros);
+println(copia);
+```
+
+Produce `[1, 5, 7]`, `10`, `[10, 5, 7]` y `[10, 99, 7]`, cada uno en su línea.
+
+- El tipo de la variable sigue siendo obligatorio: `int[]`, `float[]`, `bool[]`, `char[]` o `string[]`. Todos los elementos deben coincidir exactamente con su tipo, sin conversiones implícitas. `float[] precios = [1];` es inválido; se escribe `[1.0]`.
+- Los elementos pueden ser expresiones y se evalúan de izquierda a derecha. Sin un tipo esperado, como en `println([1, 2]);`, el primer elemento determina el tipo del literal y se comprueban los demás. Esto no permite omitir el tipo de una declaración.
+- Un array vacío se escribe `[]` y necesita el contexto de una declaración o asignación: `int[] vacio = [];`, `vacio = [];`. También puede recibir el contexto de un literal exterior cuyo tipo ya se conoce. `println([]);`, `println([[], [1]]);` y comparar una variable directamente con `[]` se rechazan porque ahí no se proporciona el tipo esperado. Se puede declarar el vacío e imprimirlo o comparar dos variables vacías del mismo tipo.
+- Se accede con `array[índice]`. El índice debe ser `int` y estar entre `0` y la longitud menos uno. Se admiten expresiones como `numeros[1 + 1]`, lecturas de literales como `[10, 20][0]` y asignaciones `numeros[0] = 10;`. Solo un nombre declarado seguido de índices puede ser destino de asignación.
+- Un índice negativo o mayor o igual que la longitud produce un error durante la ejecución. No se aceptan índices negativos para contar desde el final. La comprobación de límites también se aplica al escribir: no añade elementos ni amplía el array. El error señala la línea del corchete `[` del acceso, conserva la salida previa y detiene las instrucciones posteriores.
+- La longitud no forma parte del tipo. Se puede reemplazar todo el array por otro del mismo tipo y distinta longitud: `numeros = [4, 5];`. No hay métodos para añadir o eliminar elementos, consultar la longitud ni extraer intervalos.
+- Las copias son independientes, incluidos todos los arrays interiores. `const` impide tanto sustituir el array como escribir sus elementos, a cualquier profundidad. Una copia declarada sin `const` sí puede cambiar.
+- `==` y `!=` comparan contenido, orden y longitud entre arrays del mismo tipo, también anidados. No se admite aritmética, concatenación, lógica ni comparaciones de orden sobre arrays completos.
+- Al imprimir se usan corchetes y comas. Dentro del array, cadenas y caracteres llevan comillas: `["Ana", "世界"]`, `['ñ', '🦀']`. Se conserva el texto original, sin introducir escapes; este formato es para lectura y no garantiza poder volver a analizarlo como código si el texto contiene comillas o saltos de línea. Al imprimir un elemento aislado se conserva el formato del tipo básico.
+- No se admite una coma final (`[1, 2,]`) ni declarar la longitud con `int[3]`.
+
+### Arrays anidados
+
+Cada `[]` añade un nivel. Los arrays interiores pueden tener longitudes diferentes:
+
+```oki
+const int[][] tabla = [[], [1, 2]];
+int[][] copia = tabla;
+copia[0] = [9];
+copia[1][0] = 7;
+println(tabla);
+println(copia);
+```
+
+Produce `[[], [1, 2]]` y `[[9], [7, 2]]`. La declaración proporciona el tipo también a los arrays vacíos interiores. `tabla[1][0] = 7;` sería un error de constante antes de ejecutar.
+
+El ejemplo [arrays.oki](../examples/arrays.oki) produce:
+
+```text
+[1, 2, 3]
+10
+[1, 10, 3]
+[99, 10, 3]
+["Ana", "世界"]
+[]
+3
+true
+```
+
+## Operaciones básicas
+
+| Tipo de los operandos | Operaciones | Tipo del resultado |
+| --- | --- | --- |
+| `int` | `+`, `-`, `*`, `/`, `%`; signos unarios `+` y `-`. | `int` |
+| `float` | `+`, `-`, `*`, `/`, `%`; signos unarios `+` y `-`. | `float` |
+| `bool` | Negación `!`, conjunción `&&` («y»), disyunción `\|\|` («o»). | `bool` |
+| `string` | Concatenación `+`. | `string` |
+| Cualquiera de los tipos básicos o arrays | Igualdad `==` y desigualdad `!=` entre valores del mismo tipo. | `bool` |
+| `int`, `float`, `char`, `string` | `<`, `<=`, `>`, `>=` entre valores del mismo tipo. | `bool` |
+
+Un operador **unario** recibe un valor, como `-edad`; uno **binario** recibe dos, como `edad + 1`. No hay conversiones implícitas en los operadores: `1 + 2.0`, `1 == 1.0`, `"Hola" + '!'` y `'a' + 'b'` son errores de tipos. `char` admite comparaciones, pero no aritmética ni concatenación. `bool` no admite comparaciones de orden.
+
+- La división de `int` descarta la parte fraccionaria hacia cero: `7 / 2` da `3` y `-7 / 2` da `-3`. `7.0 / 2.0` da `3.5`.
+- `%` calcula el **resto** de la división truncada hacia cero, también para float. Su signo, si no es cero, coincide con el dividendo: `-7 % 2` da `-1`, `7 % -2` da `1` y `-7.5 % 2.0` da `-1.5`. `-9223372036854775808 % -1` da `0`.
+- Dividir o calcular el resto por cero es un error en ambos tipos, incluido `-0.0`. Se rechaza el desbordamiento de `int`, incluso al negar su mínimo o dividirlo por `-1`. También se rechaza cualquier resultado float no finito. Estos errores se detectan al evaluar y señalan la línea del operador; la salida previa permanece y las instrucciones posteriores no se ejecutan.
+- Los float conservan la precisión aproximada de `f64`: pueden redondearse y los resultados muy pequeños pueden pasar a cero. `==` compara el valor almacenado, sin tolerancia; `0.0 == -0.0` es `true`.
+- `char` se ordena por su valor escalar Unicode; `string`, lexicográficamente (comparando desde el primer carácter distinto, con el prefijo más corto primero). Se distinguen mayúsculas y minúsculas, sin reglas de ordenación por idioma ni normalización: `"A" < "a"` es `true` y la `é` precompuesta difiere de una `e` con acento combinante.
+- `&&` y `||` usan **cortocircuito**: omiten la evaluación de la derecha cuando la izquierda ya decide el resultado. `false && 1 / 0 == 0` produce `false`; `true || 1 / 0 == 0` produce `true`. Aun así, ambas partes deben tener nombres y tipos válidos antes de ejecutar.
+
+### Precedencia y paréntesis
+
+La **precedencia** decide qué operaciones se agrupan primero. De mayor a menor:
+
+1. Agrupación con paréntesis e indexación: `(expresión)`, `array[índice]`. Los accesos se encadenan de izquierda a derecha: `tabla[0][1]`.
+2. Unarios: `!`, `-`, `+`.
+3. Multiplicación, división y resto: `*`, `/`, `%`.
+4. Suma, resta y concatenación: `+`, `-`.
+5. Comparación de orden: `<`, `<=`, `>`, `>=`.
+6. Igualdad: `==`, `!=`.
+7. Conjunción: `&&`.
+8. Disyunción: `||`.
+
+Los binarios del mismo nivel se agrupan de izquierda a derecha: `20 - 5 - 3` es `(20 - 5) - 3`. Los unarios se anidan de derecha a izquierda: `--1` da `1`; no es un operador de decremento. `2 + 3 * 4` da `14`, y `(2 + 3) * 4` da `20`. Para comprobar un intervalo se escribe `1 < x && x < 3`; `1 < x < 3` intenta comparar un `bool` con un `int` y se rechaza.
+
+Las expresiones completas pueden usarse como inicializador, valor de una asignación o argumento de impresión. [operaciones.oki](../examples/operaciones.oki) recorre los cinco tipos y produce:
+
+```text
+14
+20
+3
+1
+3.5
+true
+true
+Hola, mundo
+true
+false
+```
+
+## Reglas compartidas
 
 | Elemento | Comportamiento |
 | --- | --- |
-| Instrucción | `print("texto")`, con paréntesis obligatorios y sin punto y coma. |
-| Argumento | Exactamente una cadena entre comillas dobles. Puede estar vacía. |
-| Varios `print` | Se ejecutan en el orden del archivo; cada uno añade un salto de línea a su salida. |
+| Impresión | `print(expresión);` o `println(expresión);`, con exactamente una expresión. |
+| Salida | `print` no añade salto final; `println` añade uno. Se respeta el orden del archivo. |
+| Terminación | Todas las declaraciones, asignaciones e impresiones terminan en `;`. Un salto de línea no lo sustituye. |
 | Espacios entre tokens | Se ignoran espacios, tabulaciones, retornos de carro y saltos de línea. |
-| Contenido de una cadena | Se conserva el texto, incluidos Unicode y saltos de línea reales. |
-| Secuencias de escape | No se interpretan: `\n` dentro del archivo son dos caracteres, barra y letra `n`. Una barra no permite escapar una comilla. |
+| Texto entre comillas | Conserva Unicode, espacios, punto y coma y saltos de línea reales. Termina en la siguiente comilla del mismo tipo. |
+| Secuencias de escape | No se interpretan, conservando la regla anterior para cadenas. Una barra no escapa comillas. `\n` son dos caracteres y no cabe en un `char`. |
 | Archivo vacío | Se acepta y no imprime nada. |
-| Errores de sintaxis o caracteres inválidos | Se informa del primer error y su línea; no se ejecuta ninguna instrucción del archivo. |
-
-Por ejemplo, este programa es válido:
-
-```oki
-print ( "Hola" )
-print("Mundo")
-```
-
-Produce `Hola` y `Mundo` en líneas separadas. El salto de línea entre instrucciones facilita la lectura, pero no es un separador obligatorio: el paréntesis de cierre termina cada `print`.
+| Errores de análisis, nombres o tipos | Se informa del primer error detectado y su línea, antes de ejecutar ninguna instrucción. |
+| Errores de ejecución | Índice de array fuera de rango, división o resto por cero, desbordamiento o fallo de escritura: detienen la ejecución y pueden ocurrir después de emitir parte de la salida. |
 
 ## Límites de esta versión
 
-Todavía no hay números, operaciones, variables, comentarios, condiciones, bucles ni funciones definidas por el usuario. `print` es una instrucción reservada; sus paréntesis no implican que ya exista un sistema general de llamadas a funciones.
+Todavía no hay conversión explícita de tipos, operaciones de bits, potencia, asignaciones compuestas (`+=`), incremento/decremento, acceso por índice a cadenas ni métodos de cadenas, comentarios, bloques, condiciones, bucles ni funciones definidas por el usuario. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
 
-El scanner reconoce nombres como `nombre` o `print2`, pero el parser los rechaza: reconocer un token no significa que el lenguaje permita usarlo.
+No existen `var`, `let`, `auto`, `any`, `null`, `void`, alias como `double` o `long`, tipos sin signo, otras colecciones, clases ni tipos definidos por el usuario. Se dispone de los cinco tipos básicos y arrays homogéneos, es decir, de elementos del mismo tipo. `print` y `println` siguen siendo instrucciones reservadas; sus paréntesis no implican un sistema general de llamadas.
 
-La ejecución recorre un árbol de sintaxis. No se genera código máquina ni bytecode, y no se han medido prestaciones del lenguaje. Las ampliaciones se decidirán paso a paso con el usuario.
+La ejecución recorre un árbol de sintaxis. No se genera código máquina ni bytecode y no se han medido prestaciones.
 
 ## Qué se comprueba
 
-Las seis pruebas actuales verifican el ejemplo `hello.oki`, espacios y Unicode, orden de varios `print` y cadenas vacías, archivo vacío, rechazo de programas inválidos sin salida parcial por errores de análisis, y propagación de errores de escritura.
+Las 42 pruebas de [src/main.rs](../src/main.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas nuevas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa.
 
 ```sh
-cargo test
 cargo fmt -- --check
+cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-Para seguir el recorrido de una instrucción, leer [cómo funciona internamente](funcionamiento-interno.md). Para conocer la evolución, consultar el [historial](historial.md).
+Para seguir el recorrido, leer [cómo funciona internamente](funcionamiento-interno.md). Para conocer la evolución, consultar el [historial](historial.md).
