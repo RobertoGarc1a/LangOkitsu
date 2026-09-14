@@ -68,9 +68,9 @@ Produce `25` y `26`, cada uno en su línea. La copia guarda el valor de ese mome
 - La reasignación tiene la forma `nombre = expresión;`, o `nombre[índice] = expresión;` para un elemento de array. Solo se permite para variables ya declaradas sin `const` y conserva su tipo. No es una declaración nueva.
 - El tipo debe coincidir exactamente tanto al declarar como al reasignar. No se convierte automáticamente entre `int` y `float`, entre `char` y `string`, ni entre ningún otro par de tipos.
 - Las variables deben declararse antes de usarlas. No se permite `int x = x;`, ni declarar dos veces el mismo nombre.
-- Solo existe un ámbito global por archivo: una tabla de nombres disponible durante esa ejecución. Cada ejecución empieza vacía.
+- Existe un ámbito global por archivo y, dentro de él, cada bloque `{ ... }` de un `if` abre un ámbito propio. La búsqueda de un nombre empieza en el bloque actual y continúa hacia fuera. Cada ejecución empieza vacía.
 - Los nombres empiezan por letra ASCII o `_`, y continúan con letras ASCII, dígitos o `_`. Distinguen mayúsculas de minúsculas.
-- `int`, `float`, `bool`, `char`, `string`, `const`, `true`, `false`, `print` y `println` son palabras reservadas. Nombres como `int2` o `println2` sí se permiten.
+- `int`, `float`, `bool`, `char`, `string`, `const`, `if`, `else`, `true`, `false`, `print` y `println` son palabras reservadas. Nombres como `int2` o `println2` sí se permiten.
 
 Estos fragmentos son **inválidos**:
 
@@ -243,13 +243,60 @@ true
 false
 ```
 
+## Control de flujo: if y else
+
+Un **if** elige qué bloque de instrucciones ejecutar según una condición de tipo `bool`. Las ramas van entre llaves y el `if` completo no lleva `;` final; cada instrucción de dentro sí lo lleva:
+
+```oki
+int edad = 20;
+
+if (edad >= 18) {
+    println("mayor de edad");
+} else {
+    println("menor de edad");
+}
+
+if (edad < 13) {
+    println("niñez");
+} else if (edad < 18) {
+    println("adolescencia");
+} else {
+    println("adultez");
+}
+
+string categoria = "desconocida";
+if (edad >= 18) {
+    categoria = "adulto";
+}
+println(categoria);
+```
+
+Produce `mayor de edad`, `adultez` y `adulto`, cada uno en su línea.
+
+- La condición es una expresión cualquiera y debe ser `bool`. `if (1) { ... }` es un error de tipos antes de ejecutar; también lo es usar un nombre no declarado en la condición.
+- La rama del `if` es obligatoria y va siempre entre `{` y `}`. El `else` es opcional y su rama también es un bloque. Se encadena con `else if (...) { ... }`.
+- No se pueden omitir los paréntesis ni las llaves: `if true { ... }` e `if (true) println(...);` se rechazan.
+- Cada bloque abre un **ámbito** propio. Un nombre declarado dentro solo existe hasta el `}`; usarlo después es un error. Se puede declarar de nuevo el mismo nombre en otro bloque (queda oculto mientras dura el interior). Las variables declaradas fuera siguen visibles dentro y se pueden reasignar, salvo las constantes.
+- La comprobación de tipos recorre las dos ramas antes de ejecutar, aunque solo se vaya a ejecutar una. Un error en la rama no elegida impide ejecutar el programa.
+- El ejemplo [condiciones.oki](../examples/condiciones.oki) usa la condición, la cadena `else if`/`else`, la reasignación de una variable externa y la ocultación de un nombre. Produce:
+
+```text
+mayor de edad
+adultez
+2026
+20
+adulto
+5
+20
+```
+
 ## Reglas compartidas
 
 | Elemento | Comportamiento |
 | --- | --- |
 | Impresión | `print(expresión);` o `println(expresión);`, con exactamente una expresión. |
 | Salida | `print` no añade salto final; `println` añade uno. Se respeta el orden del archivo. |
-| Terminación | Todas las declaraciones, asignaciones e impresiones terminan en `;`. Un salto de línea no lo sustituye. |
+| Terminación | Todas las declaraciones, asignaciones e impresiones terminan en `;`. Un `if`/`else` completo termina en `}` y no lleva `;`; cada instrucción de su interior sí lo lleva. Un salto de línea no sustituye el `;`. |
 | Espacios entre tokens | Se ignoran espacios, tabulaciones, retornos de carro y saltos de línea. |
 | Texto entre comillas | Conserva Unicode, espacios, punto y coma y saltos de línea reales. Termina en la siguiente comilla del mismo tipo. |
 | Secuencias de escape | No se interpretan, conservando la regla anterior para cadenas. Una barra no escapa comillas. `\n` son dos caracteres y no cabe en un `char`. |
@@ -259,7 +306,7 @@ false
 
 ## Límites de esta versión
 
-Todavía no hay conversión explícita de tipos, operaciones de bits, potencia, asignaciones compuestas (`+=`), incremento/decremento, acceso por índice a cadenas ni métodos de cadenas, comentarios, bloques, condiciones, bucles ni funciones definidas por el usuario. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
+Todavía no hay conversión explícita de tipos, operaciones de bits, potencia, asignaciones compuestas (`+=`), incremento/decremento, acceso por índice a cadenas ni métodos de cadenas, comentarios, bucles ni funciones definidas por el usuario. Los bloques solo existen como ramas de un `if`; no hay un bloque suelto ni una instrucción que declare un ámbito por sí misma. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
 
 No existen `var`, `let`, `auto`, `any`, `null`, `void`, alias como `double` o `long`, tipos sin signo, otras colecciones, clases ni tipos definidos por el usuario. Se dispone de los cinco tipos básicos y arrays homogéneos, es decir, de elementos del mismo tipo. `print` y `println` siguen siendo instrucciones reservadas; sus paréntesis no implican un sistema general de llamadas.
 
@@ -267,7 +314,7 @@ La ejecución recorre un árbol de sintaxis. No se genera código máquina ni by
 
 ## Qué se comprueba
 
-Las 42 pruebas de [src/main.rs](../src/main.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas nuevas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa.
+Las 46 pruebas de [src/main.rs](../src/main.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas nuevas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa.
 
 ```sh
 cargo fmt -- --check

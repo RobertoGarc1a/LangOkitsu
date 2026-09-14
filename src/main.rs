@@ -804,6 +804,65 @@ mod tests {
     }
 
     #[test]
+    fn executes_conditions_example() {
+        assert_eq!(
+            output(include_str!("../examples/condiciones.oki")),
+            "mayor de edad\nadultez\n2026\n20\nadulto\n5\n20\n"
+        );
+    }
+
+    #[test]
+    fn if_statements_choose_branch_and_support_else_if() {
+        assert_eq!(
+            output(
+                "int x = 2; if (x > 3) { println(\"a\"); } else { println(\"b\"); } if (x > 3) { println(\"a\"); } else if (x == 2) { println(\"c\"); } else { println(\"d\"); } if (x == 2) { println(\"e\"); }"
+            ),
+            "b\nc\ne\n"
+        );
+        assert_eq!(
+            output("if (false) { println(\"a\"); } println(\"fin\");"),
+            "fin\n"
+        );
+    }
+
+    #[test]
+    fn blocks_have_their_own_scope_and_allow_shadowing() {
+        assert_eq!(
+            output(
+                "int x = 1; if (true) { int x = 2; println(x); x = 3; println(x); } println(x); if (true) { x = 10; } println(x);"
+            ),
+            "2\n3\n1\n10\n"
+        );
+        rejects_without_output("if (true) { int y = 1; } println(y);", "no está declarada");
+        rejects_without_output(
+            "if (false) { int y = 1; } else { int z = 2; } println(z);",
+            "no está declarada",
+        );
+        rejects_without_output(
+            "const int y = 1; if (true) { y = 2; }",
+            "No se puede reasignar la constante 'y'.",
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_if_conditions_and_syntax() {
+        for source in [
+            "if (1) { println(\"a\"); }",
+            "if (true) println(\"a\");",
+            "if true { println(\"a\"); }",
+            "if () { println(\"a\"); }",
+            "if (true) { } else",
+            "if (true) { } else println(\"a\");",
+            "if (true) { int x = 1; int x = 2; }",
+            "if (desconocida) { }",
+            "if (true) { println(\"a\");",
+            "if (true) }",
+        ] {
+            rejects_without_output(&format!("println(\"previo\");\n{source}"), "Línea 2:");
+        }
+    }
+
+    #[test]
     fn char_requires_one_unicode_scalar_and_strings_keep_raw_contents() {
         assert_eq!(
             output("println('ñ');println('🦀');println('\"');println('\\');println(\"\\n\");"),

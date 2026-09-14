@@ -49,12 +49,35 @@ println("Hola" + " mundo");
 
 Los números admiten `+`, `-`, `*`, `/`, `%` y signos unarios; los booleanos, `!`, `&&` y `||`; las cadenas, concatenación con `+`. Todos los tipos admiten `==` y `!=`; números, caracteres y cadenas también admiten `<`, `<=`, `>` y `>=`. Los dos operandos deben tener el mismo tipo.
 
+Un **if** elige qué bloque ejecutar según una condición de tipo `bool`. Las ramas van entre llaves y el `if` completo no lleva `;` final; cada instrucción de dentro sí lo lleva:
+
+```oki
+int edad = 20;
+
+if (edad >= 18) {
+    println("mayor de edad");
+} else {
+    println("menor de edad");
+}
+
+if (edad < 13) {
+    println("niñez");
+} else if (edad < 18) {
+    println("adolescencia");
+} else {
+    println("adultez");
+}
+```
+
+Imprime `mayor de edad` y `adultez`. Se puede encadenar con `else if` y omitir el `else`. Cada bloque `{ ... }` abre un ámbito propio: los nombres declarados dentro solo existen ahí y se pueden reutilizar en otro bloque, mientras que las variables de fuera se pueden reasignar dentro. Consulta las [reglas de if/else](docs/estado-actual.md#control-de-flujo-if-y-else).
+
 ```sh
 cargo run -- examples/hello.oki
 cargo run -- examples/tipos.oki
 cargo run -- examples/operaciones.oki
 cargo run -- examples/constantes.oki
 cargo run -- examples/arrays.oki
+cargo run -- examples/condiciones.oki
 ```
 
 ## Documentación para aprender
@@ -82,7 +105,7 @@ Seguimos el intérprete de árbol de [Crafting Interpreters](https://craftingint
 | [src/type_checker.rs](src/type_checker.rs) | Comprobar nombres y tipos antes de ejecutar; adaptación propia para el tipado estricto. |
 | [src/interpreter.rs](src/interpreter.rs) | Evaluar el AST y guardar los valores de las variables (capítulos 7 y 8). |
 
-El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad exacta. Solo se implementa el fragmento descrito en la documentación: no hay todavía bloques, funciones ni máquina virtual.
+El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad exacta. Solo se implementa el fragmento descrito en la documentación: no hay todavía bucles, funciones ni máquina virtual.
 
 ## Comprobaciones
 

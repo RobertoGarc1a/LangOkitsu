@@ -83,7 +83,9 @@ El **parser**, o analizador sintáctico, comprueba cómo encajan los tokens. [pa
 
 ```text
 program     → statement* EOF
-statement   → declaration | assignment | printStmt
+statement   → declaration | assignment | printStmt | ifStmt
+ifStmt      → "if" "(" expression ")" block ("else" (ifStmt | block))?
+block       → "{" statement* "}"
 declaration → "const"? type IDENTIFIER "=" expression ";"
 assignment  → IDENTIFIER ("[" expression "]")* "=" expression ";"
 printStmt   → ("print" | "println") "(" expression ")" ";"
@@ -107,14 +109,15 @@ primary     → STRING | CHAR | "true" | "false" | NUMBER | IDENTIFIER
 La forma léxica de `NUMBER` es `dígitos ("." dígitos)? (("e" | "E") ("+" | "-")? dígitos)?`. Cada grupo de dígitos contiene al menos uno; el signo inicial se maneja en `unary()`.
 
 1. `parse()` recoge instrucciones hasta `Eof`.
-2. `statement()` distingue declaración, asignación e impresión por el primer token, y exige el `;` final. `declaration()` consume el `const` opcional, exige el tipo y recoge nombre e inicializador. Cada par `[]` tras el tipo básico lo envuelve en `Type::Array`. Para asignaciones, `statement()` recoge los índices opcionales después del nombre.
-3. `name()` exige un identificador y conserva su texto y línea en `Name`.
-4. `print_statement()` exige los paréntesis alrededor de una expresión.
-5. `expression()` baja por niveles de precedencia: `or()`, `and()`, `equality()`, `comparison()`, `term()`, `factor()`, `unary()`, `postfix()` y `primary()`.
-6. Cada nivel binario usa `binary()` para encadenar sus operadores de izquierda a derecha. Cada operando se analiza en el siguiente nivel, que tiene mayor precedencia.
-7. `unary()` admite signos y negación lógica de forma recursiva. Si `-` precede directamente a un token `Number`, llama a `number(true, line)` y convierte juntos signo y dígitos para aceptar el mínimo de `i64`. Los demás unarios generan un nodo `Unary`. Después de convertir un número con signo, `finish_postfix()` consume posibles índices para que también se comprueben accesos inválidos como `-1[0]`.
-8. `postfix()` y `finish_postfix()` construyen un nodo `Index` por cada acceso. `index()` recoge la expresión del índice y la línea del corchete de apertura, y exige el cierre. La misma regla se usa al asignar elementos.
-9. `primary()` crea literales básicos, referencias, arrays (`Expr::Array`) o analiza una expresión entre paréntesis. En un array recoge expresiones separadas por comas, sin coma final. `number()` convierte a `i64` o `f64`, rechazando enteros fuera de rango y float no finitos. Por ello `-9223372036854775808` es válido, pero `-(9223372036854775808)` se rechaza: el literal positivo interior ya está fuera de rango.
+2. `statement()` distingue declaración, asignación, impresión e `if` por el primer token. Declaración, asignación e impresión exigen el `;` final; el `if` termina en `}` y no lo lleva. `declaration()` consume el `const` opcional, exige el tipo y recoge nombre e inicializador. Cada par `[]` tras el tipo básico lo envuelve en `Type::Array`. Para asignaciones, `statement()` recoge los índices opcionales después del nombre.
+3. `if_statement()` consume `if`, exige la condición entre paréntesis y analiza un bloque. Si aparece `else`, analiza otro bloque o encadena un `if` anidado. `block()` recoge instrucciones hasta `}` y avisa si se alcanza el final del archivo.
+4. `name()` exige un identificador y conserva su texto y línea en `Name`.
+5. `print_statement()` exige los paréntesis alrededor de una expresión.
+6. `expression()` baja por niveles de precedencia: `or()`, `and()`, `equality()`, `comparison()`, `term()`, `factor()`, `unary()`, `postfix()` y `primary()`.
+7. Cada nivel binario usa `binary()` para encadenar sus operadores de izquierda a derecha. Cada operando se analiza en el siguiente nivel, que tiene mayor precedencia.
+8. `unary()` admite signos y negación lógica de forma recursiva. Si `-` precede directamente a un token `Number`, llama a `number(true, line)` y convierte juntos signo y dígitos para aceptar el mínimo de `i64`. Los demás unarios generan un nodo `Unary`. Después de convertir un número con signo, `finish_postfix()` consume posibles índices para que también se comprueben accesos inválidos como `-1[0]`.
+9. `postfix()` y `finish_postfix()` construyen un nodo `Index` por cada acceso. `index()` recoge la expresión del índice y la línea del corchete de apertura, y exige el cierre. La misma regla se usa al asignar elementos.
+10. `primary()` crea literales básicos, referencias, arrays (`Expr::Array`) o analiza una expresión entre paréntesis. En un array recoge expresiones separadas por comas, sin coma final. `number()` convierte a `i64` o `f64`, rechazando enteros fuera de rango y float no finitos. Por ello `-9223372036854775808` es válido, pero `-(9223372036854775808)` se rechaza: el literal positivo interior ya está fuera de rango.
 
 `peek()` consulta el token actual y `consume()` exige un token concreto y avanza. El análisis es **descendente**: empieza en el programa y baja hacia sus componentes. Los paréntesis cambian la agrupación del árbol sin necesitar un nodo propio.
 
@@ -136,9 +139,12 @@ Expr
 Stmt
 ├── Declare { declared_type, is_constant, name, initializer }
 ├── Assign { name, indices: Vec<(Expr, línea)>, value }
+├── If { condition, then_branch: Vec<Stmt>, else_branch: Option<Vec<Stmt>>, line }
 ├── Print(Expr)
 └── Println(Expr)
 ```
+
+Cada rama de un `if` es un `Vec<Stmt>`: la lista de instrucciones de su bloque. `else_branch` guarda `None` si no hay `else`; un `else if` queda como un `Vec` con un único `Stmt::If` interior.
 
 Para el ejemplo:
 
@@ -163,13 +169,14 @@ El parser copia el contenido de los tokens al árbol. Para evaluar un literal, e
 
 ## 5. Comprobación de tipos antes de ejecutar
 
-[type_checker.rs](../src/type_checker.rs) introduce `TypeChecker` y una tabla `HashMap<String, VariableInfo>`. Un **entorno** relaciona nombres con información; en esta etapa cada `VariableInfo` contiene `declared_type` (el tipo) e `is_constant` (si se prohíbe reasignar), sin guardar valores.
+[type_checker.rs](../src/type_checker.rs) introduce `TypeChecker` y una pila de ámbitos `Vec<HashMap<String, VariableInfo>>`. Un **entorno** relaciona nombres con información; en esta etapa cada `VariableInfo` contiene `declared_type` (el tipo) e `is_constant` (si se prohíbe reasignar), sin guardar valores. El último mapa de la pila es el ámbito actual; `lookup()` busca desde el más interno hacia fuera.
 
-`check()` recorre las instrucciones en orden:
+`check()` abre el ámbito global y recorre las instrucciones en orden:
 
 - En una declaración, rechaza nombres repetidos, obtiene el tipo del inicializador usando el tipo declarado como contexto y exige que coincida con el declarado. Solo entonces registra el nombre junto con su tipo y la marca `is_constant`. Así `int x = x;` falla: `x` todavía no está disponible.
 - En una asignación, busca la información del nombre y rechaza la operación si `is_constant` es `true`, incluso si el valor no cambiaría. Para las demás variables, resuelve el tipo del destino: sin índices es el declarado; cada índice exige un array y un `int`, y desciende al tipo de elemento. Compara ese tipo con el de la expresión asignada y lo proporciona como contexto para arrays vacíos. No cambia el tipo almacenado ni declara variables nuevas.
 - En una impresión, comprueba que la expresión sea válida; una referencia debe existir previamente.
+- En un `if`, obtiene el tipo de la condición y exige `Bool` (si no, el error señala la línea del `if`). Después abre un ámbito para la rama `then` y lo cierra al terminar. Si hay `else`, repite el proceso con su propia lista de instrucciones, de modo que las dos ramas se comprueban aunque solo se vaya a ejecutar una. `check_block()` hace el `push` y el `pop` del ámbito; declarar un nombre solo comprueba duplicados en el ámbito actual, así que se permite reutilizar el nombre en un bloque interior.
 
 Para `int edad = 25;`, `expression_type()` obtiene `Int` del literal. Coincide con la anotación y se guarda `edad → VariableInfo { declared_type: Int, is_constant: false }`. Cuando llega `println(edad);`, la consulta obtiene `Int` del campo `declared_type`.
 
@@ -197,9 +204,11 @@ En `Unary` y `Binary`, `expression_type()` comprueba recursivamente los operando
 
 ## 6. Intérprete y entorno de valores
 
-[interpreter.rs](../src/interpreter.rs) contiene `Interpreter<W: Write>`. Recibe un programa validado y guarda otro entorno: `HashMap<String, Value>`, que sí contiene los valores actuales.
+[interpreter.rs](../src/interpreter.rs) contiene `Interpreter<W: Write>`. Recibe un programa validado y guarda otro entorno: ahora una pila de ámbitos `Vec<HashMap<String, Value>>`, porque los bloques de un `if` pueden anidarse. El primer mapa es el ámbito global.
 
-`interpret()` llama a `execute()` para cada instrucción. Una declaración evalúa el inicializador y guarda el resultado. Una asignación resuelve primero el destino y comprueba todos sus índices de izquierda a derecha; después evalúa el nuevo valor y sustituye el anterior. Si falla un índice o la expresión asignada, no modifica el destino. `evaluate()` devuelve una copia del literal o del valor consultado; esto también copia el contenido de las cadenas y de todos los arrays anidados, y evita que dos variables compartan cambios.
+`interpret()` llama a `execute()` para cada instrucción. Una declaración evalúa el inicializador y guarda el resultado en el ámbito actual (el último de la pila). Una asignación busca el ámbito que contiene el nombre, resuelve primero el destino y comprueba todos sus índices de izquierda a derecha; después evalúa el nuevo valor y sustituye el anterior. Si falla un índice o la expresión asignada, no modifica el destino. `evaluate()` devuelve una copia del literal o del valor consultado; esto también copia el contenido de las cadenas y de todos los arrays anidados, y evita que dos variables compartan cambios. Para consultar una variable se recorre la pila de dentro hacia fuera, de modo que un nombre declarado en un bloque oculta al de un ámbito exterior mientras dura.
+
+Un `Stmt::If` evalúa su condición y, según sea `true` o `false`, ejecuta el bloque `then` o el `else`. `execute_block()` abre un ámbito con `push`, ejecuta sus instrucciones y lo cierra con `pop`; si una instrucción falla, el error se propaga y el programa se detiene. Como el comprobador ya garantizó que la condición es `bool`, el intérprete no repite esa comprobación de tipos.
 
 En el ejemplo, se almacena `edad → Value::Int(25)`. La impresión consulta ese valor y escribe `25` seguido de un salto de línea.
 
@@ -274,7 +283,36 @@ El comprobador obtiene `Int` para la multiplicación y para la suma, y registra 
 
 La aritmética entera usa operaciones `checked_*`, que devuelven un fallo en lugar de provocar un pánico de Rust o envolver el resultado fuera de rango. El resto por `-1` se resuelve como cero incluso para el mínimo de `i64`, evitando el desbordamiento del cociente intermedio. Para float se comprueba `is_finite()` después de operar. En ambos tipos se rechaza primero el divisor cero en `/` y `%`. La concatenación combina el contenido de dos cadenas; las comparaciones usan sus valores y el orden Unicode, y devuelven `Value::Bool`.
 
-Cada llamada a `run()` crea sus dos entornos vacíos. Todavía no hay bloques ni ámbitos anidados; las tablas globales son suficientes.
+### Recorrido de un if
+
+Con la entrada:
+
+```oki
+int x = 1;
+if (x < 2) {
+    int y = 10;
+    println(y);
+} else {
+    println("otro");
+}
+println(x);
+```
+
+El parser construye:
+
+```text
+Declare(x, Int)
+If(condición: Binary(Less, línea 2), línea 2)
+├── then: [Declare(y, Int), Println(Variable(y))]
+└── else: [Println(Literal(String("otro")))]
+Println(Variable(x))
+```
+
+El comprobador registra `x → Int`, obtiene `Bool` de `x < 2` y exige ese tipo a la condición. Después comprueba la rama `then` en un ámbito nuevo (allí `y → Int`) y la rama `else` en otro; `y` no existe fuera de su bloque. El intérprete guarda `x → Int(1)` en el ámbito global, evalúa `1 < 2` como `true` y entra en el bloque `then`: abre un ámbito, guarda `y → Int(10)`, imprime `10` y cierra el ámbito. La rama `else` no se ejecuta. La última impresión consulta `x` en el ámbito global y produce `1`, así que la salida es `10` y `1`, cada uno en su línea.
+
+Si la condición no fuese `bool`, por ejemplo `if (x) { ... }`, el comprobador fallaría antes de ejecutar con `Línea 2: la condición de 'if' debe ser bool; se recibió int.` y no se imprimiría nada.
+
+Cada llamada a `run()` crea sus dos entornos con un único ámbito global. Los bloques de un `if` añaden y retiran ámbitos sobre esa pila; al terminar el programa la pila vuelve a tener solo el ámbito global.
 
 ## 7. Errores
 
@@ -282,8 +320,8 @@ Cada llamada a `run()` crea sus dos entornos vacíos. Todavía no hay bloques ni
 | --- | --- | --- |
 | Lectura | Ruta ausente, archivo inexistente o contenido que no es UTF-8. | Error antes del análisis. |
 | Scanner | Comillas sin cerrar, `char` vacío o múltiple, exponente incompleto. | Error con línea. |
-| Parser | Falta un tipo válido, nombre, inicializador, paréntesis, corchete, coma entre elementos o `;`; número fuera de rango. | Error con línea. |
-| Comprobación de tipos | Variable desconocida, declaración duplicada, tipo incompatible, elementos de tipos distintos, índice que no es `int`, vacío sin contexto o reasignación de una constante. | Error con línea, antes de ejecutar. |
+| Parser | Falta un tipo válido, nombre, inicializador, paréntesis, corchete, llave, coma entre elementos o `;`; número fuera de rango. | Error con línea. |
+| Comprobación de tipos | Variable desconocida, declaración duplicada, tipo incompatible, elementos de tipos distintos, índice que no es `int`, vacío sin contexto, condición de `if` que no es `bool` o reasignación de una constante. | Error con línea, antes de ejecutar. |
 | Intérprete | Índice de array fuera de rango, división/resto por cero o resultado numérico fuera de rango; fallo al escribir. | Error con línea del corchete para índices o del operador para errores numéricos; se propaga el error de entrada/salida para escritura. |
 
 Los errores propios del lenguaje usan `String`; la escritura y lectura pueden producir `io::Error`. `run()` los propaga mediante `Box<dyn Error>`, que admite distintos tipos de error. `main()` escribe el mensaje en `stderr` con el prefijo `Error:` y termina con código de fallo.
@@ -294,7 +332,7 @@ Se devuelve el primer error detectado por las etapas, sin recuperación para bus
 
 ## Relación con Crafting Interpreters
 
-Los [capítulos 4 a 8](https://craftinginterpreters.com/contents.html) aportan el recorrido scanner → AST → parser → intérprete. El [capítulo 7](https://craftinginterpreters.com/evaluating-expressions.html) explica la representación de valores y el [capítulo 8](https://craftinginterpreters.com/statements-and-state.html) introduce declaraciones, referencias, asignaciones y entornos.
+Los [capítulos 4 a 9](https://craftinginterpreters.com/contents.html) aportan el recorrido scanner → AST → parser → intérprete. El [capítulo 7](https://craftinginterpreters.com/evaluating-expressions.html) explica la representación de valores; el [capítulo 8](https://craftinginterpreters.com/statements-and-state.html) introduce declaraciones, referencias, asignaciones, entornos y bloques; y el [capítulo 9](https://craftinginterpreters.com/control-flow.html) añade `if`/`else` y los operadores lógicos.
 
 OkitsuLang adapta esas ideas a `enum`, `match` y `HashMap` de Rust. Mantiene `print(expresión);` y `println(expresión);`, exige `tipo nombre = expresión;` con `const` opcional antes del tipo, distingue enteros de float y añade `char`. La comprobación estática, es decir, antes de ejecutar, implementa la decisión de tipado estricto del proyecto.
 

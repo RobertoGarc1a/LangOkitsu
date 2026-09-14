@@ -6,16 +6,17 @@ use crate::{
 };
 
 // El entorno de ejecución relaciona cada nombre con su valor actual.
+// Cada bloque abre un ámbito nuevo; el último de la pila es el actual.
 pub struct Interpreter<W: Write> {
     output: W,
-    values: HashMap<String, Value>,
+    scopes: Vec<HashMap<String, Value>>,
 }
 
 impl<W: Write> Interpreter<W> {
     pub fn new(output: W) -> Self {
         Self {
             output,
-            values: HashMap::new(),
+            scopes: vec![HashMap::new()],
         }
     }
 
@@ -33,27 +34,35 @@ impl<W: Write> Interpreter<W> {
                 name, initializer, ..
             } => {
                 let value = self.evaluate(initializer)?;
-                self.values.insert(name.text.clone(), value);
+                self.scopes
+                    .last_mut()
+                    .expect("ámbito abierto")
+                    .insert(name.text.clone(), value);
             }
             Stmt::Assign {
                 name,
                 indices,
                 value,
             } => {
+                let scope = self.scope_containing(&name.text).ok_or_else(|| {
+                    name.error(&format!("La variable '{}' no está declarada.", name.text))
+                })?;
                 // Resolver y validar el destino antes del valor nuevo. No hay
                 // cambios parciales si falla un índice o la expresión asignada.
                 let mut positions = Vec::new();
-                let mut target = self.values.get(&name.text).ok_or_else(|| {
-                    name.error(&format!("La variable '{}' no está declarada.", name.text))
-                })?;
-                for (index, line) in indices {
-                    let (elements, position) =
-                        Self::array_position(target, self.evaluate(index)?, *line)?;
-                    positions.push(position);
-                    target = &elements[position];
+                {
+                    let mut target = &self.scopes[scope][&name.text];
+                    for (index, line) in indices {
+                        let (elements, position) =
+                            Self::array_position(target, self.evaluate(index)?, *line)?;
+                        positions.push(position);
+                        target = &elements[position];
+                    }
                 }
                 let value = self.evaluate(value)?;
-                let mut target = self.values.get_mut(&name.text).expect("nombre validado");
+                let mut target = self.scopes[scope]
+                    .get_mut(&name.text)
+                    .expect("nombre validado");
                 for position in positions {
                     let Value::Array(elements) = target else {
                         unreachable!("destino validado")
@@ -61,6 +70,21 @@ impl<W: Write> Interpreter<W> {
                     target = &mut elements[position];
                 }
                 *target = value;
+            }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let Value::Bool(condition) = self.evaluate(condition)? else {
+                    return Err("La condición de 'if' debe ser bool.".into());
+                };
+                if condition {
+                    self.execute_block(then_branch)?;
+                } else if let Some(else_branch) = else_branch {
+                    self.execute_block(else_branch)?;
+                }
             }
             Stmt::Print(expression) => {
                 let value = self.evaluate(expression)?;
@@ -74,12 +98,33 @@ impl<W: Write> Interpreter<W> {
         Ok(())
     }
 
+    fn execute_block(&mut self, statements: &[Stmt]) -> Result<(), Box<dyn Error>> {
+        self.scopes.push(HashMap::new());
+        for statement in statements {
+            self.execute(statement)?;
+        }
+        self.scopes.pop();
+        Ok(())
+    }
+
+    fn scope_containing(&self, name: &str) -> Option<usize> {
+        self.scopes
+            .iter()
+            .rposition(|scope| scope.contains_key(name))
+    }
+
     fn evaluate(&self, expression: &Expr) -> Result<Value, String> {
         match expression {
             Expr::Literal(value) => Ok(value.clone()),
-            Expr::Variable(name) => self.values.get(&name.text).cloned().ok_or_else(|| {
-                name.error(&format!("La variable '{}' no está declarada.", name.text))
-            }),
+            Expr::Variable(name) => self
+                .scopes
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(&name.text))
+                .cloned()
+                .ok_or_else(|| {
+                    name.error(&format!("La variable '{}' no está declarada.", name.text))
+                }),
             Expr::Array { elements, .. } => elements
                 .iter()
                 .map(|element| self.evaluate(element))

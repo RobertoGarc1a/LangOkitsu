@@ -11,13 +11,21 @@ struct VariableInfo {
 }
 
 // Este entorno guarda tipos y si el nombre es constante, pero no valores.
+// Cada bloque abre un ámbito nuevo; el último de la pila es el actual.
 #[derive(Default)]
 pub struct TypeChecker {
-    types: HashMap<String, VariableInfo>,
+    scopes: Vec<HashMap<String, VariableInfo>>,
 }
 
 impl TypeChecker {
     pub fn check(&mut self, statements: &[Stmt]) -> Result<(), String> {
+        self.scopes.push(HashMap::new());
+        let result = self.check_statements(statements);
+        self.scopes.pop();
+        result
+    }
+
+    fn check_statements(&mut self, statements: &[Stmt]) -> Result<(), String> {
         for statement in statements {
             match statement {
                 Stmt::Declare {
@@ -26,7 +34,11 @@ impl TypeChecker {
                     name,
                     initializer,
                 } => {
-                    if self.types.contains_key(&name.text) {
+                    if self
+                        .scopes
+                        .last()
+                        .is_some_and(|s| s.contains_key(&name.text))
+                    {
                         return Err(
                             name.error(&format!("La variable '{}' ya está declarada.", name.text))
                         );
@@ -34,7 +46,7 @@ impl TypeChecker {
                     let actual = self.expression_type_expected(initializer, Some(declared_type))?;
                     Self::require_type(name, declared_type, &actual)?;
                     // Registrar después del inicializador impide int x = x;.
-                    self.types.insert(
+                    self.scopes.last_mut().expect("ámbito abierto").insert(
                         name.text.clone(),
                         VariableInfo {
                             declared_type: declared_type.clone(),
@@ -61,12 +73,36 @@ impl TypeChecker {
                     let actual = self.expression_type_expected(value, Some(&target_type))?;
                     Self::require_type(name, &target_type, &actual)?;
                 }
+                Stmt::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                    line,
+                } => {
+                    let actual = self.expression_type(condition)?;
+                    if actual != Type::Bool {
+                        return Err(format!(
+                            "Línea {line}: la condición de 'if' debe ser bool; se recibió {actual}."
+                        ));
+                    }
+                    self.check_block(then_branch)?;
+                    if let Some(else_branch) = else_branch {
+                        self.check_block(else_branch)?;
+                    }
+                }
                 Stmt::Print(expression) | Stmt::Println(expression) => {
                     self.expression_type(expression)?;
                 }
             }
         }
         Ok(())
+    }
+
+    fn check_block(&mut self, statements: &[Stmt]) -> Result<(), String> {
+        self.scopes.push(HashMap::new());
+        let result = self.check_statements(statements);
+        self.scopes.pop();
+        result
     }
 
     fn expression_type(&self, expression: &Expr) -> Result<Type, String> {
@@ -182,9 +218,13 @@ impl TypeChecker {
     }
 
     fn lookup(&self, name: &Name) -> Result<&VariableInfo, String> {
-        self.types.get(&name.text).ok_or_else(|| name.error(&format!(
-            "La variable '{}' no está declarada. Debe declararse antes de usarla, indicando su tipo.", name.text
-        )))
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(&name.text))
+            .ok_or_else(|| name.error(&format!(
+                "La variable '{}' no está declarada. Debe declararse antes de usarla, indicando su tipo.", name.text
+            )))
     }
 
     fn require_type(name: &Name, expected: &Type, actual: &Type) -> Result<(), String> {

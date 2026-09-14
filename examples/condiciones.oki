@@ -1,0 +1,30 @@
+int edad = 20;
+
+if (edad >= 18) {
+    println("mayor de edad");
+} else {
+    println("menor de edad");
+}
+
+if (edad < 13) {
+    println("niñez");
+} else if (edad < 18) {
+    println("adolescencia");
+} else {
+    println("adultez");
+}
+
+string categoria = "desconocida";
+if (edad >= 18) {
+    categoria = "adulto";
+    const int anio = 2026;
+    println(anio);
+}
+println(edad);
+println(categoria);
+
+if (true) {
+    int edad = 5;
+    println(edad);
+}
+println(edad);

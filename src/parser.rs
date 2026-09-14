@@ -109,6 +109,12 @@ pub enum Stmt {
         indices: Vec<(Expr, usize)>,
         value: Expr,
     },
+    If {
+        condition: Expr,
+        then_branch: Vec<Stmt>,
+        else_branch: Option<Vec<Stmt>>,
+        line: usize,
+    },
     Print(Expr),
     Println(Expr),
 }
@@ -133,6 +139,10 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Stmt, String> {
+        // Un if termina en '}' y no lleva ';'. El resto de instrucciones sí.
+        if self.peek().kind == TokenKind::If {
+            return self.if_statement();
+        }
         let statement = match self.peek().kind {
             TokenKind::Const | TokenKind::Type(_) => self.declaration()?,
             TokenKind::Identifier(_) => {
@@ -155,7 +165,7 @@ impl Parser {
             }
             _ => {
                 return Err(self.error(
-                    "Se esperaba una declaración con tipo, una asignación, 'print' o 'println'.",
+                    "Se esperaba una declaración con tipo, una asignación, 'if', 'print' o 'println'.",
                 ));
             }
         };
@@ -197,6 +207,51 @@ impl Parser {
             name,
             initializer: self.expression()?,
         })
+    }
+
+    fn if_statement(&mut self) -> Result<Stmt, String> {
+        let line = self.peek().line;
+        self.current += 1;
+        self.consume(TokenKind::LeftParen, "Se esperaba '(' después de 'if'.")?;
+        let condition = self.expression()?;
+        self.consume(
+            TokenKind::RightParen,
+            "Se esperaba ')' después de la condición.",
+        )?;
+        let then_branch = self.block()?;
+        let else_branch = if self.peek().kind == TokenKind::Else {
+            self.current += 1;
+            // 'else if' encadena otro if; 'else' va seguido de un bloque.
+            if self.peek().kind == TokenKind::If {
+                Some(vec![self.if_statement()?])
+            } else {
+                Some(self.block()?)
+            }
+        } else {
+            None
+        };
+        Ok(Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            line,
+        })
+    }
+
+    fn block(&mut self) -> Result<Vec<Stmt>, String> {
+        self.consume(
+            TokenKind::LeftBrace,
+            "Se esperaba '{' para abrir el bloque.",
+        )?;
+        let mut statements = Vec::new();
+        while self.peek().kind != TokenKind::RightBrace {
+            if self.peek().kind == TokenKind::Eof {
+                return Err(self.error("Se esperaba '}' para cerrar el bloque."));
+            }
+            statements.push(self.statement()?);
+        }
+        self.current += 1;
+        Ok(statements)
     }
 
     fn name(&mut self) -> Result<Name, String> {
