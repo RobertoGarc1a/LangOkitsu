@@ -84,7 +84,9 @@ El **parser**, o analizador sintáctico, comprueba cómo encajan los tokens. [pa
 ```text
 program     → statement* EOF
 statement   → simpleStmt ";" | ifStmt | whileStmt | forStmt | foreachStmt
-simpleStmt  → declaration | assignment | printStmt
+simpleStmt  → declaration | assignment | printStmt | importStmt
+importStmt  → ("import" | "use") path
+path        → IDENTIFIER ("::" IDENTIFIER)*
 ifStmt      → "if" "(" expression ")" block ("else" (ifStmt | block))?
 whileStmt   → "while" "(" expression ")" block
 forStmt     → "for" "(" (declaration | assignment) ";" expression ";" assignment ")" block
@@ -104,9 +106,11 @@ comparison  → term (("<" | "<=" | ">" | ">=") term)*
 term        → factor (("+" | "-") factor)*
 factor      → unary (("*" | "/" | "%") unary)*
 unary       → ("!" | "-" | "+") unary | postfix
-postfix     → primary ("[" expression "]")*
+postfix     → primary ("[" expression "]" | "." IDENTIFIER "(" arguments? ")")*
+arguments   → expression ("," expression)*
+libraryCall → path "(" arguments? ")"
 primary     → STRING | CHAR | "true" | "false" | NUMBER | IDENTIFIER
-            | "(" expression ")" | "[" (expression ("," expression)*)? "]"
+            | libraryCall | "(" expression ")" | "[" (expression ("," expression)*)? "]"
 ```
 
 `→` significa «se compone de», `|` indica alternativas, `*` permite cero o más repeticiones y `?` indica una parte opcional. `STRING`, `CHAR` y los booleanos son variantes del token `Literal`; `NUMBER` corresponde al token `Number`. El `;` que separa las tres partes de un `for` no pertenece a `declaration` ni a `assignment`: la sentencia simple lo añade al final y `for_statement()` lo exige entre partes. `assignTail` reúne las cuatro modificaciones de una variable ya declarada: asignación, asignación compuesta e incremento/decremento.
@@ -122,8 +126,8 @@ La forma léxica de `NUMBER` es `dígitos ("." dígitos)? (("e" | "E") ("+" | "-
 7. `expression()` baja por niveles de precedencia: `or()`, `and()`, `equality()`, `comparison()`, `term()`, `factor()`, `unary()`, `postfix()` y `primary()`.
 8. Cada nivel binario usa `binary()` para encadenar sus operadores de izquierda a derecha. Cada operando se analiza en el siguiente nivel, que tiene mayor precedencia.
 9. `unary()` admite signos y negación lógica de forma recursiva. Si `-` precede directamente a un token `Number`, llama a `number(true, line)` y convierte juntos signo y dígitos para aceptar el mínimo de `i64`. Los demás unarios generan un nodo `Unary`. Después de convertir un número con signo, `finish_postfix()` consume posibles índices para que también se comprueben accesos inválidos como `-1[0]`.
-10. `postfix()` y `finish_postfix()` construyen un nodo `Index` por cada acceso. `index()` recoge la expresión del índice y la línea del corchete de apertura, y exige el cierre. La misma regla se usa al asignar elementos.
-11. `primary()` crea literales básicos, referencias, arrays (`Expr::Array`) o analiza una expresión entre paréntesis. En un array recoge expresiones separadas por comas, sin coma final. `number()` convierte a `i64` o `f64`, rechazando enteros fuera de rango y float no finitos. Por ello `-9223372036854775808` es válido, pero `-(9223372036854775808)` se rechaza: el literal positivo interior ya está fuera de rango.
+10. `postfix()` y `finish_postfix()` construyen un nodo `Index` por cada acceso y un `LibraryCall` por cada método con punto. `index()` recoge la expresión del índice y la línea del corchete de apertura, y exige el cierre. La misma regla se usa al asignar elementos.
+11. `primary()` crea literales básicos, referencias, arrays (`Expr::Array`), llamadas de biblioteca por ruta (`Expr::LibraryCall`) o analiza una expresión entre paréntesis. En un array recoge expresiones separadas por comas, sin coma final. `number()` convierte a `i64` o `f64`, rechazando enteros fuera de rango y float no finitos. Por ello `-9223372036854775808` es válido, pero `-(9223372036854775808)` se rechaza: el literal positivo interior ya está fuera de rango.
 
 `peek()` consulta el token actual y `consume()` exige un token concreto y avanza. El análisis es **descendente**: empieza en el programa y baja hacia sus componentes. Los paréntesis cambian la agrupación del árbol sin necesitar un nodo propio.
 
@@ -135,6 +139,7 @@ El parser acepta la estructura de `float precio = 25;`: las piezas están bien c
 
 ```text
 Expr
+├── LibraryCall { path: Vec<Name>, receiver: Option<Box<Expr>>, arguments: Vec<Expr> }
 ├── Literal(Value)
 ├── Variable(Name)
 ├── Array { elements: Vec<Expr>, line }
@@ -143,6 +148,7 @@ Expr
 └── Binary { left: Box<Expr>, operator: BinaryOp, right: Box<Expr>, line }
 
 Stmt
+├── Import { path: Vec<Name>, is_use: bool, line }
 ├── Declare { declared_type, is_constant, name, initializer }
 ├── Assign { name, indices: Vec<(Expr, línea)>, value }
 ├── CompoundAssign { name, indices, operator: AssignOp, value, line }
@@ -274,7 +280,43 @@ El comprobador exige elementos `Int`, registra `datos → Array(Int)` y comprueb
 
 `evaluate()` construye `Value::Array` evaluando los elementos de izquierda a derecha. Para leer un `Index`, evalúa primero el array y después el índice; `array_position()` convierte el índice con `usize::try_from`, rechaza negativos o posiciones fuera de rango y devuelve la posición válida. Se copia el elemento seleccionado. En escrituras, `execute()` guarda las posiciones ya comprobadas, evalúa el nuevo valor y recorre el destino con referencias mutables para sustituir solo ese elemento. El árbol validado y la ausencia de efectos de asignación dentro de expresiones permiten usar esas posiciones sin que el destino cambie entre comprobación y escritura.
 
-`int[][] tabla = [[], [1]];` tiene tipo `Array(Array(Int))`: el contexto de la declaración permite comprobar el vacío interior. Una copia de `tabla` clona ambos niveles. La igualdad usa la comparación recursiva de `Value`: comprueba longitud, orden y valores. Un índice fuera de rango como `datos[2]` se rechaza al evaluar y señala la línea de su `[`. Los arrays se guardan en `Vec`, pero el lenguaje todavía no ofrece operaciones para añadir elementos ni consultar su longitud.
+`int[][] tabla = [[], [1]];` tiene tipo `Array(Array(Int))`: el contexto de la declaración permite comprobar el vacío interior. Una copia de `tabla` clona ambos niveles. La igualdad usa la comparación recursiva de `Value`: comprueba longitud, orden y valores. Un índice fuera de rango como `datos[2]` se rechaza al evaluar y señala la línea de su `[`. Los arrays se guardan en `Vec`; `std::Array` permite consultar su longitud, pero todavía no hay operaciones para añadir elementos.
+
+### Recorrido de una llamada a std::Array
+
+Con esta entrada:
+
+```oki
+import std::Array;
+use std::Array;
+int[] numeros = [10, 20, 30];
+println(numeros.len());
+println(std::Array::len(numeros));
+println(Array::len(numeros));
+```
+
+El scanner reconoce las nuevas palabras reservadas `Import` y `Use`, el separador `ColonColon` (`::`) y el punto `Dot`. `std`, `Array` y `len` se mantienen como identificadores. La lectura de números conserva su regla de punto decimal; por ejemplo, `1.0` sigue siendo un único token numérico.
+
+El parser conserva la estructura de las llamadas sin decidir todavía si existe la biblioteca. `path()` recoge los nombres separados por `::`, `arguments()` recoge las expresiones entre paréntesis e `import_statement()` crea `Stmt::Import`, con `is_use` para distinguir las dos instrucciones. `primary()` distingue una variable de una llamada por su ruta y paréntesis. `finish_postfix()` ahora encadena índices y métodos: `tabla[0].len()` conserva el acceso como receptor de la llamada.
+
+```text
+Import(path: [std, Array], is_use: false)
+Import(path: [std, Array], is_use: true)
+Declare(numeros, Array(Int), initializer: [Int(10), Int(20), Int(30)])
+Println(LibraryCall(path: [len], receiver: Variable(numeros), arguments: []))
+Println(LibraryCall(path: [std, Array, len], receiver: None, arguments: [Variable(numeros)]))
+Println(LibraryCall(path: [Array, len], receiver: None, arguments: [Variable(numeros)]))
+```
+
+[stdlib.rs](../src/stdlib.rs) concentra las reglas de la biblioteca incluida en Rust. `ArrayLibrary` guarda dos marcas: biblioteca importada y nombre corto habilitado. El comprobador las reinicia al empezar el archivo y las actualiza al encontrar `import` y `use` en orden. Rechaza estas instrucciones dentro de bloques; no habilita nombres a partir de una rama que quizá no se ejecute. Repetir una directiva ya válida no tiene efecto adicional.
+
+Para cada `LibraryCall`, `ArrayLibrary::resolve()` comprueba la ruta y las marcas y obtiene `ArrayFunction::Len`. `check_arity()` verifica el número de argumentos: cero con receptor o uno sin él. El comprobador obtiene el tipo del array y `result_type()` exige `Type::Array` y devuelve `Type::Int`. No necesita el tamaño real ni modifica el AST. Los nombres de las rutas se resuelven aparte de las variables; `use` solo habilita `Array::`, sin crear una variable llamada `Array`.
+
+El intérprete no realiza acciones al encontrar `Stmt::Import`: esas instrucciones ya se comprobaron. En `LibraryCall` identifica la operación, evalúa una sola vez el receptor o el único argumento y entrega su valor a `ArrayFunction::evaluate()`. `len` obtiene el número de elementos del `Vec` y lo convierte a `i64` con comprobación de rango. En el ejemplo, las tres impresiones producen `3` con salto final.
+
+La evaluación conserva la semántica actual de copia: consultar una variable array mediante `evaluate()` copia su contenido antes de medirlo. Todavía no se ha optimizado esa lectura. La llamada no escribe en el array y admite `const`. `len` solo cuenta el nivel exterior; el acceso previo de `tabla[0].len()` selecciona qué array se mide. Los errores al evaluar el receptor, como un índice fuera de rango, se propagan conservando su línea y la salida previa. El cortocircuito de `&&` y `||` puede omitir la evaluación de una llamada, pero nunca su comprobación de tipos.
+
+Una ruta, método, importación, cantidad de argumentos o tipo incorrecto falla antes de ejecutar. Los errores de llamadas señalan la línea del nombre del método; los de directivas, la de `import` o `use`. No se implementa un sistema general de funciones ni un cargador de archivos: la única biblioteca actual es `std::Array`, con `len`.
 
 ### Recorrido de una constante
 

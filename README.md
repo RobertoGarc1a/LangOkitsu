@@ -37,7 +37,22 @@ println(numeros[1]);
 
 Imprime `[10, 2, 3]` y `2`. Se pueden copiar, reasignar y anidar arrays; `const` también impide modificar sus elementos. Consulta las [reglas de arrays](docs/estado-actual.md#arrays).
 
-`print(expresión);` escribe sin añadir un salto de línea y `println(expresión);` añade uno. Se mantienen los paréntesis y el punto y coma obligatorio. Una expresión puede combinar literales (valores escritos directamente), variables ya declaradas y operadores, usando paréntesis para agrupar.
+La biblioteca estándar incluye `std::Array`. Los arrays básicos funcionan sin importarla; la importación habilita sus métodos:
+
+```oki
+import std::Array;
+
+int[] numeros = [10, 20, 30];
+println(numeros.len());
+println(std::Array::len(numeros));
+
+use std::Array;
+println(Array::len(numeros));
+```
+
+Imprime `3` tres veces. `import` habilita la biblioteca y `use` añade el nombre corto `Array`; `use` requiere un `import` anterior. Ambas instrucciones se escriben fuera de los bloques y antes de utilizar los nombres que habilitan. El primer método es `len()`, que devuelve una longitud de tipo `int` sin modificar el array. Consulta las [reglas de la biblioteca estándar](docs/estado-actual.md#biblioteca-estándar-stdarray) y el ejemplo [biblioteca_arrays.oki](examples/biblioteca_arrays.oki).
+
+`print(expresión);` escribe sin añadir un salto de línea y `println(expresión);` añade uno. Se mantienen los paréntesis y el punto y coma obligatorio. Una expresión puede combinar literales (valores escritos directamente), variables ya declaradas, llamadas de biblioteca y operadores, usando paréntesis para agrupar.
 
 ```oki
 println(2 + 3 * 4);
@@ -126,6 +141,7 @@ cargo run -- examples/arrays.oki
 cargo run -- examples/condiciones.oki
 cargo run -- examples/bucles.oki
 cargo run -- examples/asignaciones.oki
+cargo run -- examples/biblioteca_arrays.oki
 ```
 
 ## Documentación para aprender
@@ -152,8 +168,9 @@ Seguimos el intérprete de árbol de [Crafting Interpreters](https://craftingint
 | [src/value.rs](src/value.rs) | Representar tipos, valores y su impresión (capítulo 7). |
 | [src/type_checker.rs](src/type_checker.rs) | Comprobar nombres y tipos antes de ejecutar; adaptación propia para el tipado estricto. |
 | [src/interpreter.rs](src/interpreter.rs) | Evaluar el AST y guardar los valores de las variables (capítulos 7 y 8). |
+| [src/stdlib.rs](src/stdlib.rs) | Habilitar nombres de la biblioteca estándar, comprobar sus llamadas y ejecutar `Array::len`. |
 
-El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad exacta. Solo se implementa el fragmento descrito en la documentación: no hay todavía funciones ni máquina virtual.
+El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad exacta. Solo se implementa el fragmento descrito en la documentación: hay llamadas a la biblioteca estándar, pero todavía no hay funciones definidas por el usuario ni máquina virtual.
 
 ## Comprobaciones
 

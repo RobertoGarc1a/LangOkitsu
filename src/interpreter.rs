@@ -2,6 +2,7 @@ use std::{collections::HashMap, error::Error, io::Write};
 
 use crate::{
     parser::{BinaryOp, Expr, Name, Stmt, UnaryOp},
+    stdlib::ArrayFunction,
     value::Value,
 };
 
@@ -30,6 +31,7 @@ impl<W: Write> Interpreter<W> {
 
     fn execute(&mut self, statement: &Stmt) -> Result<(), Box<dyn Error>> {
         match statement {
+            Stmt::Import { .. } => {}
             Stmt::Declare {
                 name, initializer, ..
             } => {
@@ -244,6 +246,17 @@ impl<W: Write> Interpreter<W> {
 
     fn evaluate(&self, expression: &Expr) -> Result<Value, String> {
         match expression {
+            Expr::LibraryCall {
+                path,
+                receiver,
+                arguments,
+            } => {
+                let function = ArrayFunction::resolve(path, receiver.is_some())?;
+                let name = path.last().expect("ruta con nombre de método");
+                function.check_arity(arguments.len(), receiver.is_some(), name)?;
+                let array = receiver.as_deref().unwrap_or_else(|| &arguments[0]);
+                function.evaluate(self.evaluate(array)?, name)
+            }
             Expr::Literal(value) => Ok(value.clone()),
             Expr::Variable(name) => self
                 .scopes

@@ -18,6 +18,11 @@ impl Name {
 // AST: las expresiones producen valores; las instrucciones realizan acciones.
 #[derive(Debug)]
 pub enum Expr {
+    LibraryCall {
+        path: Vec<Name>,
+        receiver: Option<Box<Expr>>,
+        arguments: Vec<Expr>,
+    },
     Literal(Value),
     Variable(Name),
     Array {
@@ -144,6 +149,11 @@ impl BinaryOp {
 
 #[derive(Debug)]
 pub enum Stmt {
+    Import {
+        path: Vec<Name>,
+        is_use: bool,
+        line: usize,
+    },
     Declare {
         declared_type: Type,
         is_constant: bool,
@@ -226,6 +236,7 @@ impl Parser {
             _ => {}
         }
         let statement = match self.peek().kind {
+            TokenKind::Import | TokenKind::Use => self.import_statement()?,
             TokenKind::Const | TokenKind::Type(_) => self.declaration()?,
             TokenKind::Identifier(_) => self.assignment()?,
             TokenKind::Print | TokenKind::Println => {
@@ -235,7 +246,7 @@ impl Parser {
             }
             _ => {
                 return Err(self.error(
-                    "Se esperaba una declaración con tipo, una asignación, 'if', 'while', 'for', 'foreach', 'print' o 'println'.",
+                    "Se esperaba una declaración con tipo, una asignación, 'import', 'use', 'if', 'while', 'for', 'foreach', 'print' o 'println'.",
                 ));
             }
         };
@@ -244,6 +255,48 @@ impl Parser {
             "Se esperaba ';' al final de la instrucción.",
         )?;
         Ok(statement)
+    }
+
+    fn import_statement(&mut self) -> Result<Stmt, String> {
+        let line = self.peek().line;
+        let is_use = self.peek().kind == TokenKind::Use;
+        self.current += 1;
+        Ok(Stmt::Import {
+            path: self.path()?,
+            is_use,
+            line,
+        })
+    }
+
+    fn path(&mut self) -> Result<Vec<Name>, String> {
+        let mut path = vec![self.name()?];
+        while self.peek().kind == TokenKind::ColonColon {
+            self.current += 1;
+            path.push(self.name()?);
+        }
+        Ok(path)
+    }
+
+    fn arguments(&mut self) -> Result<Vec<Expr>, String> {
+        self.consume(
+            TokenKind::LeftParen,
+            "Se esperaba '(' para llamar al método de biblioteca.",
+        )?;
+        let mut arguments = Vec::new();
+        if self.peek().kind != TokenKind::RightParen {
+            loop {
+                arguments.push(self.expression()?);
+                if self.peek().kind != TokenKind::Comma {
+                    break;
+                }
+                self.current += 1;
+            }
+        }
+        self.consume(
+            TokenKind::RightParen,
+            "Se esperaba ')' después de los argumentos.",
+        )?;
+        Ok(arguments)
     }
 
     // Modificación de una variable ya declarada: asignación simple, asignación
@@ -613,13 +666,27 @@ impl Parser {
     }
 
     fn finish_postfix(&mut self, mut expression: Expr) -> Result<Expr, String> {
-        while self.peek().kind == TokenKind::LeftBracket {
-            let (index, line) = self.index()?;
-            expression = Expr::Index {
-                array: Box::new(expression),
-                index: Box::new(index),
-                line,
-            };
+        loop {
+            match self.peek().kind {
+                TokenKind::LeftBracket => {
+                    let (index, line) = self.index()?;
+                    expression = Expr::Index {
+                        array: Box::new(expression),
+                        index: Box::new(index),
+                        line,
+                    };
+                }
+                TokenKind::Dot => {
+                    self.current += 1;
+                    let path = vec![self.name()?];
+                    expression = Expr::LibraryCall {
+                        path,
+                        receiver: Some(Box::new(expression)),
+                        arguments: self.arguments()?,
+                    };
+                }
+                _ => break,
+            }
         }
         Ok(expression)
     }
@@ -682,7 +749,14 @@ impl Parser {
                 self.current += 1;
                 Ok(expression)
             }
-            TokenKind::Identifier(_) => Ok(Expr::Variable(self.name()?)),
+            TokenKind::Identifier(_) => {
+                let mut path = self.path()?;
+                if path.len() == 1 && self.peek().kind != TokenKind::LeftParen {
+                    Ok(Expr::Variable(path.remove(0)))
+                } else {
+                    Ok(Expr::LibraryCall { path, receiver: None, arguments: self.arguments()? })
+                }
+            }
             _ => Err(self
                 .error("Se esperaba un literal (int, float, bool, char, string o array), una variable o una expresión entre paréntesis.")),
         }

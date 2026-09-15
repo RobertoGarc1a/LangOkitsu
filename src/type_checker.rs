@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     parser::{BinaryOp, Expr, Name, Stmt, UnaryOp},
+    stdlib::ArrayLibrary,
     value::Type,
 };
 
@@ -15,10 +16,12 @@ struct VariableInfo {
 #[derive(Default)]
 pub struct TypeChecker {
     scopes: Vec<HashMap<String, VariableInfo>>,
+    array_library: ArrayLibrary,
 }
 
 impl TypeChecker {
     pub fn check(&mut self, statements: &[Stmt]) -> Result<(), String> {
+        self.array_library = ArrayLibrary::default();
         self.scopes.push(HashMap::new());
         let result = self.check_statements(statements);
         self.scopes.pop();
@@ -34,6 +37,14 @@ impl TypeChecker {
 
     fn check_statement(&mut self, statement: &Stmt) -> Result<(), String> {
         match statement {
+            Stmt::Import { path, is_use, line } => {
+                if self.scopes.len() != 1 {
+                    return Err(format!(
+                        "Línea {line}: 'import' y 'use' solo se permiten en el ámbito global del archivo."
+                    ));
+                }
+                self.array_library.import(path, *is_use, *line)?;
+            }
             Stmt::Declare {
                 declared_type,
                 is_constant,
@@ -211,6 +222,18 @@ impl TypeChecker {
         expected: Option<&Type>,
     ) -> Result<Type, String> {
         match expression {
+            Expr::LibraryCall {
+                path,
+                receiver,
+                arguments,
+            } => {
+                let function = self.array_library.resolve(path, receiver.is_some())?;
+                let name = path.last().expect("ruta con nombre de método");
+                function.check_arity(arguments.len(), receiver.is_some(), name)?;
+                // Las dos sintaxis entregan el mismo array a la biblioteca.
+                let array = receiver.as_deref().unwrap_or_else(|| &arguments[0]);
+                function.result_type(&self.expression_type(array)?, name)
+            }
             Expr::Literal(value) => value
                 .value_type()
                 .ok_or_else(|| "Literal sin tipo de elemento.".to_string()),

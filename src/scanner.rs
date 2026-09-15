@@ -13,6 +13,10 @@ pub enum TokenKind {
     For,
     Foreach,
     In,
+    Import,
+    Use,
+    ColonColon,
+    Dot,
     Type(Type),
     Semicolon,
     LeftParen,
@@ -80,6 +84,15 @@ impl<'a> Scanner<'a> {
                 '[' => TokenKind::LeftBracket,
                 ']' => TokenKind::RightBracket,
                 ',' => TokenKind::Comma,
+                '.' => TokenKind::Dot,
+                ':' => {
+                    if self.chars.next_if_eq(&':').is_none() {
+                        return Err(format!(
+                            "Línea {line}: se esperaba '::' en la ruta de biblioteca."
+                        ));
+                    }
+                    TokenKind::ColonColon
+                }
                 ';' => TokenKind::Semicolon,
                 '=' => self.paired('=', TokenKind::EqualEqual, TokenKind::Equal),
                 '!' => self.paired('=', TokenKind::BangEqual, TokenKind::Bang),
@@ -244,6 +257,8 @@ impl<'a> Scanner<'a> {
             "for" => TokenKind::For,
             "foreach" => TokenKind::Foreach,
             "in" => TokenKind::In,
+            "import" => TokenKind::Import,
+            "use" => TokenKind::Use,
             "int" => TokenKind::Type(Type::Int),
             "float" => TokenKind::Type(Type::Float),
             "bool" => TokenKind::Type(Type::Bool),
