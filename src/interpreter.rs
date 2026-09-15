@@ -2,7 +2,7 @@ use std::{collections::HashMap, error::Error, io::Write};
 
 use crate::{
     parser::{BinaryOp, Expr, Name, Stmt, UnaryOp},
-    stdlib::ArrayFunction,
+    stdlib::{ArrayFunction, casting},
     value::Value,
 };
 
@@ -275,6 +275,9 @@ impl<W: Write> Interpreter<W> {
     }
 
     fn evaluate_call(&mut self, expression: &Expr) -> Result<Option<Value>, String> {
+        if matches!(expression, Expr::Cast { .. }) {
+            return self.evaluate(expression).map(Some);
+        }
         let Expr::LibraryCall {
             path,
             receiver,
@@ -302,6 +305,14 @@ impl<W: Write> Interpreter<W> {
 
     fn evaluate(&mut self, expression: &Expr) -> Result<Value, String> {
         match expression {
+            Expr::Cast {
+                path,
+                target,
+                value,
+            } => {
+                let value = self.evaluate(value)?;
+                casting::evaluate(value, target, path.last().expect("ruta de conversión"))
+            }
             Expr::LibraryCall { path, .. } => self.evaluate_call(expression)?.ok_or_else(|| {
                 path.last()
                     .expect("ruta con nombre de método")

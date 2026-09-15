@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     parser::{BinaryOp, Expr, Name, Stmt, UnaryOp},
-    stdlib::{ArrayFunction, ArrayLibrary},
+    stdlib::{ArrayFunction, StandardLibrary},
     value::Type,
 };
 
@@ -16,12 +16,12 @@ struct VariableInfo {
 #[derive(Default)]
 pub struct TypeChecker {
     scopes: Vec<HashMap<String, VariableInfo>>,
-    array_library: ArrayLibrary,
+    library: StandardLibrary,
 }
 
 impl TypeChecker {
     pub fn check(&mut self, statements: &[Stmt]) -> Result<(), String> {
-        self.array_library = ArrayLibrary::default();
+        self.library = StandardLibrary::default();
         self.scopes.push(HashMap::new());
         let result = self.check_statements(statements);
         self.scopes.pop();
@@ -46,7 +46,7 @@ impl TypeChecker {
                         "Línea {line}: 'import' y 'use' solo se permiten en el ámbito global del archivo."
                     ));
                 }
-                self.array_library.import(path, *is_use, *line)?;
+                self.library.import(path, *is_use, *line)?;
             }
             Stmt::Declare {
                 declared_type,
@@ -225,6 +225,13 @@ impl TypeChecker {
         expected: Option<&Type>,
     ) -> Result<Type, String> {
         match expression {
+            Expr::Cast {
+                path,
+                target,
+                value,
+            } => self
+                .library
+                .check_cast(path, &self.expression_type(value)?, target),
             Expr::LibraryCall { path, .. } => self.check_call(expression)?.ok_or_else(|| {
                 path.last()
                     .expect("ruta con nombre de método")
@@ -297,6 +304,9 @@ impl TypeChecker {
     }
 
     fn check_call(&self, expression: &Expr) -> Result<Option<Type>, String> {
+        if matches!(expression, Expr::Cast { .. }) {
+            return self.expression_type(expression).map(Some);
+        }
         let Expr::LibraryCall {
             path,
             receiver,
@@ -305,7 +315,7 @@ impl TypeChecker {
         else {
             unreachable!("instrucción de llamada validada por el parser")
         };
-        let function = self.array_library.resolve(path, receiver.is_some())?;
+        let function = self.library.resolve(path, receiver.is_some())?;
         let name = path.last().expect("ruta con nombre de método");
         function.check_arity(arguments.len(), receiver.is_some(), name)?;
         let array = receiver.as_deref().unwrap_or_else(|| &arguments[0]);

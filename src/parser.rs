@@ -18,6 +18,11 @@ impl Name {
 // AST: las expresiones producen valores; las instrucciones realizan acciones.
 #[derive(Clone, Debug)]
 pub enum Expr {
+    Cast {
+        path: Vec<Name>,
+        target: Type,
+        value: Box<Expr>,
+    },
     LibraryCall {
         path: Vec<Name>,
         receiver: Option<Box<Expr>>,
@@ -253,11 +258,19 @@ impl Parser {
         }
         let statement = match self.peek().kind {
             TokenKind::Import | TokenKind::Use => self.import_statement()?,
-            TokenKind::Const | TokenKind::Type(_) => self.declaration()?,
-            TokenKind::Identifier(_) | TokenKind::LeftParen | TokenKind::LeftBracket => {
+            TokenKind::Const => self.declaration()?,
+            TokenKind::Type(_) if self.tokens[self.current + 1].kind != TokenKind::LeftParen => {
+                self.declaration()?
+            }
+            TokenKind::Type(_)
+            | TokenKind::Number(_)
+            | TokenKind::Literal(_)
+            | TokenKind::Identifier(_)
+            | TokenKind::LeftParen
+            | TokenKind::LeftBracket => {
                 let start = self.current;
                 let expression = self.postfix()?;
-                if matches!(expression, Expr::LibraryCall { .. }) {
+                if matches!(expression, Expr::LibraryCall { .. } | Expr::Cast { .. }) {
                     Stmt::Call(expression)
                 } else {
                     self.current = start;
@@ -704,10 +717,24 @@ impl Parser {
                 TokenKind::Dot => {
                     self.current += 1;
                     let path = vec![self.name()?];
-                    expression = Expr::LibraryCall {
-                        path,
-                        receiver: Some(Box::new(expression)),
-                        arguments: self.arguments()?,
+                    expression = if path[0].text == "cast" {
+                        self.consume(TokenKind::LeftParen, "Se esperaba '(' después de 'cast'.")?;
+                        let target = self.array_type()?;
+                        self.consume(
+                            TokenKind::RightParen,
+                            "Se esperaba ')' después del único tipo de destino de 'cast'.",
+                        )?;
+                        Expr::Cast {
+                            path,
+                            target,
+                            value: Box::new(expression),
+                        }
+                    } else {
+                        Expr::LibraryCall {
+                            path,
+                            receiver: Some(Box::new(expression)),
+                            arguments: self.arguments()?,
+                        }
                     };
                 }
                 _ => break,
@@ -746,6 +773,7 @@ impl Parser {
 
     fn primary(&mut self) -> Result<Expr, String> {
         match &self.peek().kind {
+            TokenKind::Type(_) => self.conversion_call(Vec::new()),
             TokenKind::LeftBracket => {
                 let line = self.peek().line;
                 self.current += 1;
@@ -775,7 +803,14 @@ impl Parser {
                 Ok(expression)
             }
             TokenKind::Identifier(_) => {
-                let mut path = self.path()?;
+                let mut path = vec![self.name()?];
+                while self.peek().kind == TokenKind::ColonColon {
+                    self.current += 1;
+                    if matches!(self.peek().kind, TokenKind::Type(_)) {
+                        return self.conversion_call(path);
+                    }
+                    path.push(self.name()?);
+                }
                 if path.len() == 1 && self.peek().kind != TokenKind::LeftParen {
                     Ok(Expr::Variable(path.remove(0)))
                 } else {
@@ -785,6 +820,33 @@ impl Parser {
             _ => Err(self
                 .error("Se esperaba un literal (int, float, bool, char, string o array), una variable o una expresión entre paréntesis.")),
         }
+    }
+
+    // El destino es un tipo del AST, no una variable ni un valor de ejecución.
+    fn conversion_call(&mut self, mut path: Vec<Name>) -> Result<Expr, String> {
+        let TokenKind::Type(target) = &self.peek().kind else {
+            unreachable!("token de tipo comprobado")
+        };
+        let target = target.clone();
+        let name = Name {
+            text: target.to_string(),
+            line: self.peek().line,
+        };
+        self.current += 1;
+        let mut arguments = self.arguments()?;
+        if arguments.len() != 1 {
+            return Err(name.error(&format!(
+                "'{}' esperaba 1 argumentos entre paréntesis; recibió {}.",
+                name.text,
+                arguments.len()
+            )));
+        }
+        path.push(name);
+        Ok(Expr::Cast {
+            path,
+            target,
+            value: Box::new(arguments.remove(0)),
+        })
     }
 
     fn consume(&mut self, expected: TokenKind, message: &str) -> Result<(), String> {

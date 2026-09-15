@@ -213,14 +213,17 @@ impl<'a> Scanner<'a> {
     fn number(&mut self, first: char) -> Result<TokenKind, String> {
         let mut text = String::from(first);
         self.digits(&mut text);
-        if self.chars.next_if_eq(&'.').is_some() {
+        // El punto solo pertenece al número si después hay un dígito;
+        // en `25.cast(float)` inicia un método.
+        if self.chars.peek() == Some(&'.')
+            && self
+                .chars
+                .clone()
+                .nth(1)
+                .is_some_and(|c| c.is_ascii_digit())
+        {
+            self.chars.next();
             text.push('.');
-            if !self.chars.peek().is_some_and(char::is_ascii_digit) {
-                return Err(format!(
-                    "Línea {}: se esperaba un dígito después del punto decimal.",
-                    self.line
-                ));
-            }
             self.digits(&mut text);
         }
         if let Some(c) = self.chars.next_if(|c| matches!(c, 'e' | 'E')) {

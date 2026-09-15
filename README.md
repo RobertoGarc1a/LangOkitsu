@@ -17,6 +17,22 @@ println(edad);
 
 Los tipos básicos son `int`, `float`, `bool`, `char` y `string`. También hay arrays del mismo tipo, escritos como `int[]`, `string[]` o `int[][]`. No hay inferencia del tipo de una variable ni conversiones implícitas: `float precio = 25;` es un error; `float precio = 25.0;` es válido. La comprobación de tipos se realiza antes de ejecutar el archivo.
 
+Para convertir de forma explícita, importa `std::Casting`. Puedes llamar a la función del tipo de destino o usar `.cast(tipo)`:
+
+```oki
+import std::Casting;
+int edad = 25;
+float decimal = float(edad);
+string texto = "Edad: " + string(edad);
+float numero = 19.95;
+int entero = numero.cast(int);
+println(decimal);
+println(texto);
+println(entero);
+```
+
+Imprime `25.0`, `Edad: 25` y `19`. La conversión devuelve un valor nuevo: `numero` sigue siendo `19.95`. También existen `std::Casting::float(edad)` y, tras `use std::Casting;`, `Casting::float(edad)`. Consulta las [conversiones admitidas y sus errores](docs/estado-actual.md#conversiones-explícitas-stdcasting) y el ejemplo [conversiones.oki](examples/conversiones.oki).
+
 Para impedir que un valor cambie, añade `const` antes del tipo:
 
 ```oki
@@ -158,6 +174,7 @@ cargo run -- examples/bucles.oki
 cargo run -- examples/asignaciones.oki
 cargo run -- examples/biblioteca_arrays.oki
 cargo run -- examples/modificar_arrays.oki
+cargo run -- examples/conversiones.oki
 ```
 
 ## Documentación para aprender
@@ -184,7 +201,8 @@ Seguimos el intérprete de árbol de [Crafting Interpreters](https://craftingint
 | [src/value.rs](src/value.rs) | Representar tipos, valores y su impresión (capítulo 7). |
 | [src/type_checker.rs](src/type_checker.rs) | Comprobar nombres y tipos antes de ejecutar; adaptación propia para el tipado estricto. |
 | [src/interpreter.rs](src/interpreter.rs) | Evaluar el AST y guardar los valores de las variables (capítulos 7 y 8). |
-| [src/stdlib.rs](src/stdlib.rs) | Habilitar nombres de la biblioteca estándar, comprobar sus llamadas y ejecutar `len`, `push` y `pop` de arrays. |
+| [src/stdlib.rs](src/stdlib.rs) | Habilitar por separado `Array` y `Casting`, resolver llamadas y ejecutar `len`, `push` y `pop` de arrays. |
+| [src/stdlib/casting.rs](src/stdlib/casting.rs) | Comprobar los pares de tipos convertibles y transformar valores, validando texto, rangos y Unicode. |
 
 El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad exacta. Solo se implementa el fragmento descrito en la documentación: hay llamadas a la biblioteca estándar, pero todavía no hay funciones definidas por el usuario ni máquina virtual.
 

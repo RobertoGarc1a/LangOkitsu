@@ -1,0 +1,20 @@
+import std::Casting;
+
+int edad = 25;
+float edad_decimal = float(edad);
+string mensaje = "Edad: " + string(edad);
+float numero = 19.95;
+int entero = numero.cast(int);
+
+println(edad_decimal);
+println(mensaje);
+println(entero);
+println(numero);
+println("42".cast(int) + 8);
+println(bool("true"));
+println(char("ñ"));
+println(int('ñ'));
+println(std::Casting::float(edad));
+
+use std::Casting;
+println(Casting::string(edad));

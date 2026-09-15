@@ -77,6 +77,8 @@ El scanner también reconoce los operadores `+`, `-`, `*`, `/`, `%`, `!`, `==`, 
 
 El scanner comprueba la forma del literal numérico; no comprueba declaraciones ni imprime nada.
 
+Para distinguir `25.0` de `25.cast(float)`, `number()` mira el carácter posterior al punto: solo lo consume como decimal si hay un dígito. En el segundo caso emite `Number("25")` y deja que el recorrido principal reconozca `Dot` e `Identifier("cast")`. Los tipos siguen usando `TokenKind::Type`; no se añaden palabras reservadas para Casting.
+
 ## 3. Parser y gramática
 
 El **parser**, o analizador sintáctico, comprueba cómo encajan los tokens. [parser.rs](../src/parser.rs) contiene las reglas y las estructuras del AST:
@@ -85,7 +87,7 @@ El **parser**, o analizador sintáctico, comprueba cómo encajan los tokens. [pa
 program     → statement* EOF
 statement   → simpleStmt ";" | ifStmt | whileStmt | forStmt | foreachStmt
 simpleStmt  → declaration | assignment | printStmt | importStmt | callStmt
-callStmt    → postfix  (su nodo exterior debe ser LibraryCall)
+callStmt    → postfix  (su nodo exterior debe ser LibraryCall o Cast)
 importStmt  → ("import" | "use") path
 path        → IDENTIFIER ("::" IDENTIFIER)*
 ifStmt      → "if" "(" expression ")" block ("else" (ifStmt | block))?
@@ -107,16 +109,20 @@ comparison  → term (("<" | "<=" | ">" | ">=") term)*
 term        → factor (("+" | "-") factor)*
 factor      → unary (("*" | "/" | "%") unary)*
 unary       → ("!" | "-" | "+") unary | postfix
-postfix     → primary ("[" expression "]" | "." IDENTIFIER "(" arguments? ")")*
+postfix     → primary ("[" expression "]" | "." IDENTIFIER "(" arguments? ")"
+                      | "." "cast" "(" type ")")*
 arguments   → expression ("," expression)*
 libraryCall → path "(" arguments? ")"
+conversion  → (path "::")? basicType "(" expression ")"
 primary     → STRING | CHAR | "true" | "false" | NUMBER | IDENTIFIER
-            | libraryCall | "(" expression ")" | "[" (expression ("," expression)*)? "]"
+            | libraryCall | conversion | "(" expression ")" | "[" (expression ("," expression)*)? "]"
 ```
 
 `→` significa «se compone de», `|` indica alternativas, `*` permite cero o más repeticiones y `?` indica una parte opcional. `STRING`, `CHAR` y los booleanos son variantes del token `Literal`; `NUMBER` corresponde al token `Number`. El `;` que separa las tres partes de un `for` no pertenece a `declaration` ni a `assignment`: la sentencia simple lo añade al final y `for_statement()` lo exige entre partes. `assignTail` reúne las cuatro modificaciones de una variable ya declarada: asignación, asignación compuesta e incremento/decremento.
 
 La forma léxica de `NUMBER` es `dígitos ("." dígitos)? (("e" | "E") ("+" | "-")? dígitos)?`. Cada grupo de dígitos contiene al menos uno; el signo inicial se maneja en `unary()`.
+
+En el sufijo con punto, el identificador `cast` usa exclusivamente la alternativa que recibe un tipo; los demás métodos reciben expresiones. El comprobador restringe los destinos de Casting a tipos básicos y valida la ruta opcional como `std::Casting` o `Casting`. `path` sigue sirviendo sin cambios para las importaciones; `primary()` permite un tipo reservado al final de una ruta de conversión. Al inicio de una instrucción, un tipo seguido de `(` indica una conversión; en otro caso inicia una declaración.
 
 1. `parse()` recoge instrucciones hasta `Eof`.
 2. `statement()` distingue por el primer token las sentencias simples (declaración, modificación de variable, llamada, impresión), que exigen el `;` final, y las que terminan en `}` ( `if`, `while`, `for` y `foreach`), que no lo llevan. Ante un identificador, paréntesis o corchete analiza `postfix()`: si obtiene una llamada la envuelve en `Stmt::Call`; en otro caso vuelve al inicio para analizar la asignación. Este paso solo construye el árbol, sin ejecutar sus expresiones. `declaration()` consume el `const` opcional, delega el tipo en `array_type()` y recoge nombre e inicializador. `assignment()` recoge el nombre y los índices opcionales y, según el token siguiente, construye una asignación (`=`), una asignación compuesta (`+=`, `-=`) o un incremento/decremento (`++`, `--`); se separa de `statement()` para poder reutilizarla en la cabecera de un `for`. `array_type()` consume el tipo básico y envuelve cada par `[]` en `Type::Array`.
@@ -127,8 +133,8 @@ La forma léxica de `NUMBER` es `dígitos ("." dígitos)? (("e" | "E") ("+" | "-
 7. `expression()` baja por niveles de precedencia: `or()`, `and()`, `equality()`, `comparison()`, `term()`, `factor()`, `unary()`, `postfix()` y `primary()`.
 8. Cada nivel binario usa `binary()` para encadenar sus operadores de izquierda a derecha. Cada operando se analiza en el siguiente nivel, que tiene mayor precedencia.
 9. `unary()` admite signos y negación lógica de forma recursiva. Si `-` precede directamente a un token `Number`, llama a `number(true, line)` y convierte juntos signo y dígitos para aceptar el mínimo de `i64`. Los demás unarios generan un nodo `Unary`. Después de convertir un número con signo, `finish_postfix()` consume posibles índices para que también se comprueben accesos inválidos como `-1[0]`.
-10. `postfix()` y `finish_postfix()` construyen un nodo `Index` por cada acceso y un `LibraryCall` por cada método con punto. `index()` recoge la expresión del índice y la línea del corchete de apertura, y exige el cierre. La misma regla se usa al asignar elementos.
-11. `primary()` crea literales básicos, referencias, arrays (`Expr::Array`), llamadas de biblioteca por ruta (`Expr::LibraryCall`) o analiza una expresión entre paréntesis. En un array recoge expresiones separadas por comas, sin coma final. `number()` convierte a `i64` o `f64`, rechazando enteros fuera de rango y float no finitos. Por ello `-9223372036854775808` es válido, pero `-(9223372036854775808)` se rechaza: el literal positivo interior ya está fuera de rango.
+10. `postfix()` y `finish_postfix()` construyen un nodo `Index` por cada acceso y un `LibraryCall` por cada método con punto, salvo `cast`, que produce `Cast`. `index()` recoge la expresión del índice y la línea del corchete de apertura, y exige el cierre. La misma regla se usa al asignar elementos.
+11. `primary()` crea literales básicos, referencias, arrays (`Expr::Array`), llamadas de biblioteca por ruta (`Expr::LibraryCall`), conversiones (`Expr::Cast`) o analiza una expresión entre paréntesis. En un array recoge expresiones separadas por comas, sin coma final. `number()` convierte a `i64` o `f64`, rechazando enteros fuera de rango y float no finitos. Por ello `-9223372036854775808` es válido, pero `-(9223372036854775808)` se rechaza: el literal positivo interior ya está fuera de rango.
 
 `peek()` consulta el token actual y `consume()` exige un token concreto y avanza. El análisis es **descendente**: empieza en el programa y baja hacia sus componentes. Los paréntesis cambian la agrupación del árbol sin necesitar un nodo propio.
 
@@ -141,6 +147,7 @@ El parser acepta la estructura de `float precio = 25;`: las piezas están bien c
 ```text
 Expr
 ├── LibraryCall { path: Vec<Name>, receiver: Option<Box<Expr>>, arguments: Vec<Expr> }
+├── Cast { path: Vec<Name>, target: Type, value: Box<Expr> }
 ├── Literal(Value)
 ├── Variable(Name)
 ├── Array { elements: Vec<Expr>, line }
@@ -310,15 +317,15 @@ Println(LibraryCall(path: [std, Array, len], receiver: None, arguments: [Variabl
 Println(LibraryCall(path: [Array, len], receiver: None, arguments: [Variable(numeros)]))
 ```
 
-[stdlib.rs](../src/stdlib.rs) concentra las reglas de la biblioteca incluida en Rust. `ArrayLibrary` guarda dos marcas: biblioteca importada y nombre corto habilitado. El comprobador las reinicia al empezar el archivo y las actualiza al encontrar `import` y `use` en orden. Rechaza estas instrucciones dentro de bloques; no habilita nombres a partir de una rama que quizá no se ejecute. Repetir una directiva ya válida no tiene efecto adicional.
+[stdlib.rs](../src/stdlib.rs) concentra las reglas de la biblioteca incluida en Rust. `StandardLibrary` guarda un `LibraryAccess` para Array y otro para Casting. Cada uno conserva dos marcas independientes: biblioteca importada y nombre corto habilitado. El comprobador las reinicia al empezar el archivo y las actualiza al encontrar `import` y `use` en orden. Rechaza estas instrucciones dentro de bloques; no habilita nombres a partir de una rama que quizá no se ejecute. Repetir una directiva ya válida no tiene efecto adicional.
 
-Para cada `LibraryCall` de este ejemplo, `ArrayLibrary::resolve()` comprueba la ruta y las marcas y obtiene `ArrayFunction::Len`. `check_arity()` verifica el número de argumentos: cero con receptor o uno sin él. El comprobador obtiene el tipo del array y `result_type()` exige `Type::Array` y devuelve `Some(Type::Int)`. Este `Option` distingue las llamadas con resultado de `push`, que no devuelve valor. No necesita el tamaño real ni modifica el AST. Los nombres de las rutas se resuelven aparte de las variables; `use` solo habilita `Array::`, sin crear una variable llamada `Array`.
+Para cada `LibraryCall` de este ejemplo, `StandardLibrary::resolve()` comprueba la ruta y las marcas y obtiene `ArrayFunction::Len`. `check_arity()` verifica el número de argumentos: cero con receptor o uno sin él. El comprobador obtiene el tipo del array y `result_type()` exige `Type::Array` y devuelve `Some(Type::Int)`. Este `Option` distingue las llamadas con resultado de `push`, que no devuelve valor. No necesita el tamaño real ni modifica el AST. Los nombres de las rutas se resuelven aparte de las variables; `use` solo habilita `Array::`, sin crear una variable llamada `Array`.
 
 El intérprete no realiza acciones al encontrar `Stmt::Import`: esas instrucciones ya se comprobaron. En `LibraryCall` identifica la operación, evalúa una sola vez el receptor o el único argumento y entrega su valor a `ArrayFunction::evaluate()`. `len` obtiene el número de elementos del `Vec` y lo convierte a `i64` con comprobación de rango. En el ejemplo, las tres impresiones producen `3` con salto final.
 
 La evaluación conserva la semántica actual de copia: consultar una variable array mediante `evaluate()` copia su contenido antes de medirlo. Todavía no se ha optimizado esa lectura. La llamada no escribe en el array y admite `const`. `len` solo cuenta el nivel exterior; el acceso previo de `tabla[0].len()` selecciona qué array se mide. Los errores al evaluar el receptor, como un índice fuera de rango, se propagan conservando su línea y la salida previa. El cortocircuito de `&&` y `||` puede omitir la evaluación de una llamada, pero nunca su comprobación de tipos.
 
-Una ruta, método, importación, cantidad de argumentos o tipo incorrecto falla antes de ejecutar. Los errores de llamadas señalan la línea del nombre del método; los de directivas, la de `import` o `use`. No se implementa un sistema general de funciones ni un cargador de archivos: la única biblioteca actual es `std::Array`, con `len`, `push` y `pop`.
+Una ruta, método, importación, cantidad de argumentos o tipo incorrecto falla antes de ejecutar. Los errores de llamadas señalan la línea del nombre del método; los de directivas, la de `import` o `use`. No se implementa un sistema general de funciones ni un cargador de archivos: las bibliotecas actuales son `std::Array`, con `len`, `push` y `pop`, y `std::Casting`, con conversiones entre tipos básicos.
 
 ### Recorrido de push y pop
 
@@ -338,6 +345,38 @@ El scanner no necesita nuevos tokens: `push` y `pop` son identificadores. El par
 `Interpreter::evaluate()` recibe ahora `&mut self`, porque evaluar `pop` cambia el entorno. `evaluate_call()` resuelve el ámbito y los índices con `resolve_target()`, evalúa el argumento de `push` y obtiene el almacenamiento mediante `target_mut()`. `ArrayFunction::evaluate()` recibe ese valor por referencia mutable y opera sobre su `Vec`: `push` añade y `pop` extrae el último elemento. En el ejemplo, `tabla` pasa de `[[]]` a `[[4]]` y vuelve a `[[]]`; `ultimo` guarda `Value::Int(4)`. Se imprime `4` y `[[]]`.
 
 Los índices se evalúan una sola vez, antes del argumento que se va a insertar. Si una llamada interior elimina parte del destino, se comprueban de nuevo las posiciones guardadas; no se repiten las expresiones de los índices. Por ejemplo, `int[] a = [1]; a[0] = a.pop();` extrae `1` y después falla al escribir en la posición que ya no existe. Los efectos completados no se deshacen. `pop` de un vacío falla en la línea de su nombre. Los errores conservan la salida previa. Se mantienen la evaluación de izquierda a derecha, el cortocircuito y el recorrido de una copia en `foreach`.
+
+### Recorrido de una conversión con std::Casting
+
+```oki
+import std::Casting;
+int edad = 25;
+float decimal = float(edad);
+string texto = edad.cast(string);
+println(decimal);
+println(texto);
+```
+
+El scanner reconoce `Type(Float)` tanto en la declaración como en la llamada; el parser distingue ambas posiciones por la gramática. `conversion_call()` recoge el tipo de destino y exige exactamente una expresión entre paréntesis. Para el método, `finish_postfix()` reconoce `cast` y recoge un tipo mediante `array_type()`. Conserva el receptor como entrada del nuevo nodo. Las dos formas producen `Expr::Cast`, con el tipo de destino separado del valor: los tipos no son valores de ejecución ni variables.
+
+```text
+Import(path: [std, Casting], is_use: false)
+Declare(edad, Int, Literal(Int(25)))
+Declare(decimal, Float, Cast(path: [float], target: Float, value: Variable(edad)))
+Declare(texto, String, Cast(path: [cast], target: String, value: Variable(edad)))
+Println(Variable(decimal))
+Println(Variable(texto))
+```
+
+Para `std::Casting::float(edad)` y `Casting::float(edad)`, el nodo es el mismo y la ruta guarda los tres o dos nombres. El comprobador calcula el tipo de la entrada y llama a `StandardLibrary::check_cast()`: valida la ruta, exige importación y el `use` cuando corresponde, y delega los pares permitidos a `casting::check_type()`. Devuelve el tipo de destino, que debe coincidir exactamente con el tipo de la declaración. En el ejemplo registra `decimal → Float` y `texto → String`. No evalúa el contenido de la entrada.
+
+El intérprete evalúa `value` una sola vez y llama a `casting::evaluate()` en [stdlib/casting.rs](../src/stdlib/casting.rs). En este caso obtiene `Value::Float(25.0)` y `Value::String("25")`. Guarda esos resultados e imprime `25.0` y `25`, en líneas separadas. La variable `edad` sigue guardando `Value::Int(25)`. Tanto el comprobador como el intérprete admiten `Cast` en `Stmt::Call` para descartar un resultado.
+
+La biblioteca separa compatibilidad de tipos y validación del valor. `bool(1)` falla antes de ejecutar; `int("hola")` tiene tipos convertibles y falla al interpretar. La conversión de texto usa análisis decimal y comprobaciones de contenido, sin evaluar el texto como código. `string(valor)` reutiliza `Display` para mantener el formato de impresión. `char` usa valores escalares Unicode; la conversión desde `int` comprueba tanto el rango de `u32` como `char::from_u32`.
+
+Para `float` → `int`, se trunca hacia cero y se verifica el intervalo `[-2^63, 2^63)` antes de convertir con `as`. El límite superior es exclusivo porque `i64::MAX` redondeado a `f64` ya es `2^63`: compararlo como máximo inclusivo admitiría un valor inválido y Rust lo saturaría. `int` → `float` conserva el redondeo de `f64`; no garantiza recuperar todos los enteros grandes al convertir de vuelta.
+
+Un error de conversión usa la línea del último `Name` de la ruta, incluido `cast` en los métodos. Los errores de la entrada se propagan sin sustituir su línea. El orden de evaluación y el cortocircuito siguen perteneciendo al intérprete: `false && bool("inválido")` no transforma el texto, pero `false && bool(1)` se rechaza al comprobar sus tipos. Los arrays completos no son convertibles; sí se pueden convertir sus elementos, como `datos[0].cast(float)`.
 
 ### Recorrido de una constante
 
@@ -467,6 +506,8 @@ Cada llamada a `run()` crea sus dos entornos con un único ámbito global. Los b
 | Scanner | Comillas sin cerrar, `char` vacío o múltiple, exponente incompleto. | Error con línea. |
 | Parser | Falta un tipo válido, nombre, inicializador, paréntesis, corchete, llave, coma entre elementos o `;`; en los bucles, falta alguna de las tres partes del `for` o la palabra `in` del `foreach`; número fuera de rango. | Error con línea. |
 | Comprobación de tipos | Variable desconocida, declaración duplicada, tipo incompatible, elementos de tipos distintos, índice que no es `int`, vacío sin contexto, condición de `if`/`while`/`for` que no es `bool`, `foreach` que no recorre un array o cuyo tipo de elemento no coincide, reasignación de una constante, o `+=`/`-=`/`++`/`--` sobre un destino que no admite la operación. | Error con línea, antes de ejecutar. |
+| Casting: comprobación de tipos | Biblioteca sin importar, ruta inválida o par no convertible, como `bool(1)`. | Error antes de ejecutar, con la línea de la función o de `cast`. |
+| Casting: ejecución | Texto inválido o resultado fuera de rango, como `int("hola")`. | Error con la línea de la función o de `cast`, conservando la salida previa. |
 | Intérprete | Índice de array fuera de rango, división/resto por cero o resultado numérico fuera de rango; fallo al escribir. | Error con línea del corchete para índices o del operador para errores numéricos; se propaga el error de entrada/salida para escritura. |
 
 Los errores propios del lenguaje usan `String`; la escritura y lectura pueden producir `io::Error`. `run()` los propaga mediante `Box<dyn Error>`, que admite distintos tipos de error. `main()` escribe el mensaje en `stderr` con el prefijo `Error:` y termina con código de fallo.
