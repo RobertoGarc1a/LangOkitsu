@@ -3,7 +3,7 @@ use crate::{
     value::{Type, Value},
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Name {
     pub text: String,
     pub line: usize,
@@ -16,7 +16,7 @@ impl Name {
 }
 
 // AST: las expresiones producen valores; las instrucciones realizan acciones.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Expr {
     LibraryCall {
         path: Vec<Name>,
@@ -45,6 +45,21 @@ pub enum Expr {
         right: Box<Expr>,
         line: usize,
     },
+}
+
+impl Expr {
+    // Solo una variable y sus índices identifican almacenamiento modificable.
+    pub fn into_target(self) -> Option<(Name, Vec<(Expr, usize)>)> {
+        match self {
+            Self::Variable(name) => Some((name, Vec::new())),
+            Self::Index { array, index, line } => {
+                let (name, mut indices) = array.into_target()?;
+                indices.push((*index, line));
+                Some((name, indices))
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -149,6 +164,7 @@ impl BinaryOp {
 
 #[derive(Debug)]
 pub enum Stmt {
+    Call(Expr),
     Import {
         path: Vec<Name>,
         is_use: bool,
@@ -238,7 +254,16 @@ impl Parser {
         let statement = match self.peek().kind {
             TokenKind::Import | TokenKind::Use => self.import_statement()?,
             TokenKind::Const | TokenKind::Type(_) => self.declaration()?,
-            TokenKind::Identifier(_) => self.assignment()?,
+            TokenKind::Identifier(_) | TokenKind::LeftParen | TokenKind::LeftBracket => {
+                let start = self.current;
+                let expression = self.postfix()?;
+                if matches!(expression, Expr::LibraryCall { .. }) {
+                    Stmt::Call(expression)
+                } else {
+                    self.current = start;
+                    self.assignment()?
+                }
+            }
             TokenKind::Print | TokenKind::Println => {
                 let newline = self.peek().kind == TokenKind::Println;
                 self.current += 1;

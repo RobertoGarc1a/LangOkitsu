@@ -31,6 +31,9 @@ impl<W: Write> Interpreter<W> {
 
     fn execute(&mut self, statement: &Stmt) -> Result<(), Box<dyn Error>> {
         match statement {
+            Stmt::Call(expression) => {
+                self.evaluate_call(expression)?;
+            }
             Stmt::Import { .. } => {}
             Stmt::Declare {
                 name, initializer, ..
@@ -48,7 +51,7 @@ impl<W: Write> Interpreter<W> {
             } => {
                 let (scope, positions) = self.resolve_target(name, indices)?;
                 let value = self.evaluate(value)?;
-                self.write_target(scope, &name.text, &positions, value);
+                self.write_target(scope, name, &positions, value)?;
             }
             Stmt::CompoundAssign {
                 name,
@@ -60,10 +63,10 @@ impl<W: Write> Interpreter<W> {
                 // Equivale a `x = x <op> v`: se lee el destino, se evalúa el
                 // valor nuevo y se escribe solo si la operación tiene éxito.
                 let (scope, positions) = self.resolve_target(name, indices)?;
-                let current = self.target_value(scope, &name.text, &positions);
+                let current = self.target_value(scope, name, &positions)?;
                 let operand = self.evaluate(value)?;
                 let result = Self::binary(current, operator.binary(), operand, *line)?;
-                self.write_target(scope, &name.text, &positions, result);
+                self.write_target(scope, name, &positions, result)?;
             }
             Stmt::Increment {
                 name,
@@ -72,7 +75,7 @@ impl<W: Write> Interpreter<W> {
                 line,
             } => {
                 let (scope, positions) = self.resolve_target(name, indices)?;
-                let current = self.target_value(scope, &name.text, &positions);
+                let current = self.target_value(scope, name, &positions)?;
                 // El paso conserva el tipo del destino: 1 para int, 1.0 para float.
                 let step = match current {
                     Value::Int(_) => Value::Int(1),
@@ -80,7 +83,7 @@ impl<W: Write> Interpreter<W> {
                     _ => unreachable!("tipo validado"),
                 };
                 let result = Self::binary(current, operator.binary(), step, *line)?;
-                self.write_target(scope, &name.text, &positions, result);
+                self.write_target(scope, name, &positions, result)?;
             }
             Stmt::If {
                 condition,
@@ -153,7 +156,7 @@ impl<W: Write> Interpreter<W> {
         Ok(())
     }
 
-    fn evaluate_bool(&self, condition: &Expr, keyword: &str) -> Result<bool, String> {
+    fn evaluate_bool(&mut self, condition: &Expr, keyword: &str) -> Result<bool, String> {
         let Value::Bool(value) = self.evaluate(condition)? else {
             return Err(format!("La condición de '{keyword}' debe ser bool."));
         };
@@ -200,10 +203,9 @@ impl<W: Write> Interpreter<W> {
             .rposition(|scope| scope.contains_key(name))
     }
 
-    // Busca el ámbito del nombre y valida cada índice, sin modificar nada. Si un
-    // índice falla, el destino no se altera. Devuelve el ámbito y las posiciones.
+    // Evalúa cada índice una vez y consulta el destino después de sus efectos.
     fn resolve_target(
-        &self,
+        &mut self,
         name: &Name,
         indices: &[(Expr, usize)],
     ) -> Result<(usize, Vec<usize>), String> {
@@ -211,52 +213,100 @@ impl<W: Write> Interpreter<W> {
             name.error(&format!("La variable '{}' no está declarada.", name.text))
         })?;
         let mut positions = Vec::new();
-        let mut target = &self.scopes[scope][&name.text];
         for (index, line) in indices {
-            let (elements, position) = Self::array_position(target, self.evaluate(index)?, *line)?;
+            let index = self.evaluate(index)?;
+            let target = self.target_value(scope, name, &positions)?;
+            let (_, position) = Self::array_position(&target, index, *line)?;
             positions.push(position);
-            target = &elements[position];
         }
         Ok((scope, positions))
     }
 
     // Copia del valor actual del destino ya validado.
-    fn target_value(&self, scope: usize, name: &str, positions: &[usize]) -> Value {
-        let mut target = &self.scopes[scope][name];
+    fn target_value(
+        &self,
+        scope: usize,
+        name: &Name,
+        positions: &[usize],
+    ) -> Result<Value, String> {
+        let mut target = &self.scopes[scope][&name.text];
         for position in positions {
             let Value::Array(elements) = target else {
                 unreachable!("destino validado")
             };
-            target = &elements[*position];
+            target = elements.get(*position).ok_or_else(|| {
+                name.error("El destino quedó fuera de rango durante la evaluación.")
+            })?;
         }
-        target.clone()
+        Ok(target.clone())
     }
 
     // Sustituye el valor del destino ya validado.
-    fn write_target(&mut self, scope: usize, name: &str, positions: &[usize], value: Value) {
-        let mut target = self.scopes[scope].get_mut(name).expect("nombre validado");
+    fn write_target(
+        &mut self,
+        scope: usize,
+        name: &Name,
+        positions: &[usize],
+        value: Value,
+    ) -> Result<(), String> {
+        *self.target_mut(scope, name, positions)? = value;
+        Ok(())
+    }
+
+    // Un pop en otro argumento puede haber acortado el destino ya resuelto.
+    fn target_mut(
+        &mut self,
+        scope: usize,
+        name: &Name,
+        positions: &[usize],
+    ) -> Result<&mut Value, String> {
+        let mut target = self.scopes[scope]
+            .get_mut(&name.text)
+            .expect("nombre validado");
         for position in positions {
             let Value::Array(elements) = target else {
                 unreachable!("destino validado")
             };
-            target = &mut elements[*position];
+            target = elements.get_mut(*position).ok_or_else(|| {
+                name.error("El destino quedó fuera de rango durante la evaluación.")
+            })?;
         }
-        *target = value;
+        Ok(target)
     }
 
-    fn evaluate(&self, expression: &Expr) -> Result<Value, String> {
+    fn evaluate_call(&mut self, expression: &Expr) -> Result<Option<Value>, String> {
+        let Expr::LibraryCall {
+            path,
+            receiver,
+            arguments,
+        } = expression
+        else {
+            unreachable!("instrucción de llamada validada")
+        };
+        let function = ArrayFunction::resolve(path, receiver.is_some())?;
+        let name = path.last().expect("ruta con nombre de método");
+        function.check_arity(arguments.len(), receiver.is_some(), name)?;
+        let array = receiver.as_deref().unwrap_or_else(|| &arguments[0]);
+        if matches!(function, ArrayFunction::Len) {
+            return function.evaluate(&mut self.evaluate(array)?, None, name);
+        }
+        let (target, indices) = array.clone().into_target().expect("destino comprobado");
+        let (scope, positions) = self.resolve_target(&target, &indices)?;
+        let value = if matches!(function, ArrayFunction::Push) {
+            Some(self.evaluate(arguments.last().expect("argumento validado"))?)
+        } else {
+            None
+        };
+        function.evaluate(self.target_mut(scope, &target, &positions)?, value, name)
+    }
+
+    fn evaluate(&mut self, expression: &Expr) -> Result<Value, String> {
         match expression {
-            Expr::LibraryCall {
-                path,
-                receiver,
-                arguments,
-            } => {
-                let function = ArrayFunction::resolve(path, receiver.is_some())?;
-                let name = path.last().expect("ruta con nombre de método");
-                function.check_arity(arguments.len(), receiver.is_some(), name)?;
-                let array = receiver.as_deref().unwrap_or_else(|| &arguments[0]);
-                function.evaluate(self.evaluate(array)?, name)
-            }
+            Expr::LibraryCall { path, .. } => self.evaluate_call(expression)?.ok_or_else(|| {
+                path.last()
+                    .expect("ruta con nombre de método")
+                    .error("'push' no devuelve un valor.")
+            }),
             Expr::Literal(value) => Ok(value.clone()),
             Expr::Variable(name) => self
                 .scopes

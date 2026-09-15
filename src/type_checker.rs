@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     parser::{BinaryOp, Expr, Name, Stmt, UnaryOp},
-    stdlib::ArrayLibrary,
+    stdlib::{ArrayFunction, ArrayLibrary},
     value::Type,
 };
 
@@ -37,6 +37,9 @@ impl TypeChecker {
 
     fn check_statement(&mut self, statement: &Stmt) -> Result<(), String> {
         match statement {
+            Stmt::Call(expression) => {
+                self.check_call(expression)?;
+            }
             Stmt::Import { path, is_use, line } => {
                 if self.scopes.len() != 1 {
                     return Err(format!(
@@ -222,18 +225,11 @@ impl TypeChecker {
         expected: Option<&Type>,
     ) -> Result<Type, String> {
         match expression {
-            Expr::LibraryCall {
-                path,
-                receiver,
-                arguments,
-            } => {
-                let function = self.array_library.resolve(path, receiver.is_some())?;
-                let name = path.last().expect("ruta con nombre de método");
-                function.check_arity(arguments.len(), receiver.is_some(), name)?;
-                // Las dos sintaxis entregan el mismo array a la biblioteca.
-                let array = receiver.as_deref().unwrap_or_else(|| &arguments[0]);
-                function.result_type(&self.expression_type(array)?, name)
-            }
+            Expr::LibraryCall { path, .. } => self.check_call(expression)?.ok_or_else(|| {
+                path.last()
+                    .expect("ruta con nombre de método")
+                    .error("'push' no devuelve un valor; úsalo como instrucción con ';'.")
+            }),
             Expr::Literal(value) => value
                 .value_type()
                 .ok_or_else(|| "Literal sin tipo de elemento.".to_string()),
@@ -298,6 +294,38 @@ impl TypeChecker {
                 })
             }
         }
+    }
+
+    fn check_call(&self, expression: &Expr) -> Result<Option<Type>, String> {
+        let Expr::LibraryCall {
+            path,
+            receiver,
+            arguments,
+        } = expression
+        else {
+            unreachable!("instrucción de llamada validada por el parser")
+        };
+        let function = self.array_library.resolve(path, receiver.is_some())?;
+        let name = path.last().expect("ruta con nombre de método");
+        function.check_arity(arguments.len(), receiver.is_some(), name)?;
+        let array = receiver.as_deref().unwrap_or_else(|| &arguments[0]);
+        let array_type = self.expression_type(array)?;
+        let result = function.result_type(&array_type, name)?;
+        if !matches!(function, ArrayFunction::Len) {
+            let (target, indices) = array.clone().into_target().ok_or_else(|| {
+                name.error("Se necesita una variable array modificable o uno de sus subarrays.")
+            })?;
+            self.assignment_target(&target, &indices)?;
+        }
+        if matches!(function, ArrayFunction::Push) {
+            let Type::Array(element) = array_type else {
+                unreachable!("tipo comprobado")
+            };
+            let value = arguments.last().expect("argumento de push validado");
+            let actual = self.expression_type_expected(value, Some(&element))?;
+            Self::require_type(name, &element, &actual)?;
+        }
+        Ok(result)
     }
 
     // Reglas de tipos de un operador binario. Devuelve None si los operandos no

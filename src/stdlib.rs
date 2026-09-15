@@ -36,10 +36,13 @@ impl ArrayLibrary {
         let function = ArrayFunction::resolve(path, method)?;
         let name = path.last().expect("ruta con nombre de método");
         if !self.imported {
-            return Err(name.error("El método 'len' requiere un 'import std::Array;' anterior."));
+            return Err(name.error(&format!(
+                "El método '{}' requiere un 'import std::Array;' anterior.",
+                name.text
+            )));
         }
         if !method && path.len() == 2 && !self.short_name {
-            return Err(name.error("El nombre corto 'Array' requiere un 'use std::Array;' anterior; también puedes escribir 'std::Array::len(array)'."));
+            return Err(name.error("El nombre corto 'Array' requiere un 'use std::Array;' anterior; también puedes usar la ruta completa 'std::Array'."));
         }
         Ok(function)
     }
@@ -54,6 +57,8 @@ fn path_text(path: &[Name]) -> String {
 
 pub enum ArrayFunction {
     Len,
+    Push,
+    Pop,
 }
 
 impl ArrayFunction {
@@ -73,36 +78,62 @@ impl ArrayFunction {
         }
         match name.text.as_str() {
             "len" => Ok(Self::Len),
+            "push" => Ok(Self::Push),
+            "pop" => Ok(Self::Pop),
             _ => Err(name.error(&format!(
-                "Método de biblioteca desconocido '{}'; std::Array solo ofrece 'len'.",
+                "Método de biblioteca desconocido '{}'; std::Array ofrece 'len', 'push' y 'pop'.",
                 name.text
             ))),
         }
     }
 
     pub fn check_arity(&self, arguments: usize, method: bool, name: &Name) -> Result<(), String> {
-        let expected = if method { 0 } else { 1 };
+        let expected = usize::from(!method) + usize::from(matches!(self, Self::Push));
         if arguments != expected {
             return Err(name.error(&format!(
-                "'len' esperaba {expected} argumentos entre paréntesis; recibió {arguments}."
+                "'{}' esperaba {expected} argumentos entre paréntesis; recibió {arguments}.",
+                name.text
             )));
         }
         Ok(())
     }
 
-    pub fn result_type(&self, array: &Type, name: &Name) -> Result<Type, String> {
-        if !matches!(array, Type::Array(_)) {
-            return Err(name.error(&format!("'len' solo admite arrays; se recibió {array}.")));
-        }
-        Ok(Type::Int)
+    pub fn result_type(&self, array: &Type, name: &Name) -> Result<Option<Type>, String> {
+        let Type::Array(element) = array else {
+            return Err(name.error(&format!(
+                "'{}' solo admite arrays; se recibió {array}.",
+                name.text
+            )));
+        };
+        Ok(match self {
+            Self::Len => Some(Type::Int),
+            Self::Push => None,
+            Self::Pop => Some(element.as_ref().clone()),
+        })
     }
 
-    pub fn evaluate(&self, array: Value, name: &Name) -> Result<Value, String> {
+    pub fn evaluate(
+        &self,
+        array: &mut Value,
+        value: Option<Value>,
+        name: &Name,
+    ) -> Result<Option<Value>, String> {
         let Value::Array(elements) = array else {
-            return Err(name.error("'len' solo admite arrays."));
+            return Err(name.error(&format!("'{}' solo admite arrays.", name.text)));
         };
-        i64::try_from(elements.len())
-            .map(Value::Int)
-            .map_err(|_| name.error("La longitud del array está fuera del rango de int."))
+        match self {
+            Self::Len => i64::try_from(elements.len())
+                .map(Value::Int)
+                .map(Some)
+                .map_err(|_| name.error("La longitud del array está fuera del rango de int.")),
+            Self::Push => {
+                elements.push(value.expect("argumento de push validado"));
+                Ok(None)
+            }
+            Self::Pop => elements
+                .pop()
+                .map(Some)
+                .ok_or_else(|| name.error("No se puede hacer 'pop' de un array vacío.")),
+        }
     }
 }

@@ -50,7 +50,22 @@ use std::Array;
 println(Array::len(numeros));
 ```
 
-Imprime `3` tres veces. `import` habilita la biblioteca y `use` añade el nombre corto `Array`; `use` requiere un `import` anterior. Ambas instrucciones se escriben fuera de los bloques y antes de utilizar los nombres que habilitan. El primer método es `len()`, que devuelve una longitud de tipo `int` sin modificar el array. Consulta las [reglas de la biblioteca estándar](docs/estado-actual.md#biblioteca-estándar-stdarray) y el ejemplo [biblioteca_arrays.oki](examples/biblioteca_arrays.oki).
+Imprime `3` tres veces. `import` habilita la biblioteca y `use` añade el nombre corto `Array`; `use` requiere un `import` anterior. Ambas instrucciones se escriben fuera de los bloques y antes de utilizar los nombres que habilitan. `len()` devuelve una longitud de tipo `int` sin modificar el array. Consulta las [reglas de la biblioteca estándar](docs/estado-actual.md#biblioteca-estándar-stdarray) y el ejemplo [biblioteca_arrays.oki](examples/biblioteca_arrays.oki).
+
+Para construir listas durante la ejecución, `push` añade al final y `pop` elimina y devuelve el último elemento. Admiten las mismas dos formas que `len`:
+
+```oki
+import std::Array;
+use std::Array;
+int[] numeros = [1, 2, 3];
+numeros.push(4);
+Array::push(numeros, 5);
+println(numeros.pop());
+println(std::Array::pop(numeros));
+println(numeros);
+```
+
+Imprime `5`, `4` y `[1, 2, 3]`. `push` no devuelve un valor. Ambas operaciones exigen un array modificable; `pop` sobre un array vacío produce un error. Consulta las [reglas de modificación](docs/estado-actual.md#añadir-y-eliminar-elementos) y el ejemplo [modificar_arrays.oki](examples/modificar_arrays.oki).
 
 `print(expresión);` escribe sin añadir un salto de línea y `println(expresión);` añade uno. Se mantienen los paréntesis y el punto y coma obligatorio. Una expresión puede combinar literales (valores escritos directamente), variables ya declaradas, llamadas de biblioteca y operadores, usando paréntesis para agrupar.
 
@@ -142,6 +157,7 @@ cargo run -- examples/condiciones.oki
 cargo run -- examples/bucles.oki
 cargo run -- examples/asignaciones.oki
 cargo run -- examples/biblioteca_arrays.oki
+cargo run -- examples/modificar_arrays.oki
 ```
 
 ## Documentación para aprender
@@ -168,7 +184,7 @@ Seguimos el intérprete de árbol de [Crafting Interpreters](https://craftingint
 | [src/value.rs](src/value.rs) | Representar tipos, valores y su impresión (capítulo 7). |
 | [src/type_checker.rs](src/type_checker.rs) | Comprobar nombres y tipos antes de ejecutar; adaptación propia para el tipado estricto. |
 | [src/interpreter.rs](src/interpreter.rs) | Evaluar el AST y guardar los valores de las variables (capítulos 7 y 8). |
-| [src/stdlib.rs](src/stdlib.rs) | Habilitar nombres de la biblioteca estándar, comprobar sus llamadas y ejecutar `Array::len`. |
+| [src/stdlib.rs](src/stdlib.rs) | Habilitar nombres de la biblioteca estándar, comprobar sus llamadas y ejecutar `len`, `push` y `pop` de arrays. |
 
 El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad exacta. Solo se implementa el fragmento descrito en la documentación: hay llamadas a la biblioteca estándar, pero todavía no hay funciones definidas por el usuario ni máquina virtual.
 

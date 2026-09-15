@@ -204,7 +204,7 @@ mod tests {
         }
         for call in [
             "[1].size()",
-            "std::Array::push([1])",
+            "std::Array::missing([1])",
             "Array::missing([1])",
             "std::String::len([1])",
             "len([1])",
@@ -293,6 +293,183 @@ mod tests {
             output(include_str!("../examples/arrays.oki")),
             "[1, 2, 3]\n10\n[1, 10, 3]\n[99, 10, 3]\n[\"Ana\", \"世界\"]\n[]\n3\ntrue\n"
         );
+    }
+
+    #[test]
+    fn executes_array_mutation_example() {
+        assert_eq!(
+            output(include_str!("../examples/modificar_arrays.oki")),
+            "[1, 2, 3, 4]\n4\n3\n[1, 2]\n2\n1\n0\n"
+        );
+    }
+
+    #[test]
+    fn push_and_pop_support_both_syntaxes_and_all_element_types() {
+        for (kind, value) in [
+            ("int", "4"),
+            ("float", "4.0"),
+            ("bool", "true"),
+            ("char", "'ñ'"),
+            ("string", "\"世界\""),
+        ] {
+            for (push, pop) in [
+                (format!("a.push({value})"), "a.pop()"),
+                (
+                    format!("std::Array::push(a, {value})"),
+                    "std::Array::pop(a)",
+                ),
+                (format!("Array::push(a, {value})"), "Array::pop(a)"),
+            ] {
+                assert_eq!(
+                    output(&format!(
+                        "import std::Array; use std::Array; {kind}[] a = []; {push}; println(a.len()); {kind} last = {pop}; println(last == {value}); println(a.len()); {push}; {pop}; println(a);"
+                    )),
+                    "1\ntrue\n0\n[]\n"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn array_mutation_supports_nested_targets_empty_elements_and_independent_copies() {
+        assert_eq!(
+            output(
+                "import std::Array; use std::Array; int[][] a = []; a.push([]); Array::push(a[0], 1); int[] original = [2]; a.push(original); original.push(3); int[][] copy = a; copy[0].push(9); int[] last = std::Array::pop(a); last.push(4); println(a); println(copy); println(original); println(last); (a[0]).pop(); println(a);"
+            ),
+            "[[1]]\n[[1, 9], [2]]\n[2, 3]\n[2, 4]\n[[]]\n"
+        );
+    }
+
+    #[test]
+    fn array_mutation_builds_lists_in_loops_and_respects_scopes_and_foreach_snapshot() {
+        assert_eq!(
+            output(
+                "import std::Array; int[] a = []; for (int i = 0; i < 3; i++) { a.push(i); } if (true) { int[] a = []; a.push(9); println(a); } foreach (int n in a) { a.push(n + 3); } println(a); while (a.len() > 0) { print(a.pop()); } println(a);"
+            ),
+            "[9]\n[0, 1, 2, 3, 4, 5]\n543210[]\n"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_array_mutations_before_output() {
+        for (call, error) in [
+            ("a.push()", "esperaba 1 argumentos"),
+            ("a.pop(0)", "esperaba 0 argumentos"),
+            ("std::Array::push(a)", "esperaba 2 argumentos"),
+            ("Array::pop()", "esperaba 1 argumentos"),
+            ("a.push(1.0)", "se esperaba int, se recibió float"),
+            ("a.push([])", "un array vacío necesita"),
+            ("a.push(missing)", "no está declarada"),
+            ("[1].push(2)", "variable array modificable"),
+            ("std::Array::pop([1])", "variable array modificable"),
+            ("Array::push(1, 2)", "solo admite arrays"),
+            ("push(a, 4)", "desconocida"),
+            ("pop(a)", "desconocida"),
+            ("println(a.push(2))", "no devuelve un valor"),
+            ("float n = a.pop()", "se esperaba float, se recibió int"),
+        ] {
+            rejects_without_output(
+                &format!(
+                    "import std::Array; use std::Array; int[] a = [1]; println(\"previo\"); {call};"
+                ),
+                error,
+            );
+        }
+        for call in [
+            "a.push(2)",
+            "a.pop()",
+            "std::Array::push(a, 2)",
+            "Array::pop(a)",
+        ] {
+            rejects_without_output(
+                &format!(
+                    "import std::Array; use std::Array; const int[] a = [1]; println(\"previo\"); {call};"
+                ),
+                "constante 'a'",
+            );
+            rejects_without_output(
+                &format!("int[] a = [1]; println(\"previo\"); {call}; import std::Array;"),
+                "requiere un 'import std::Array;' anterior",
+            );
+        }
+        rejects_without_output(
+            "import std::Array; const int[][] a = [[1]]; a[0].pop();",
+            "constante 'a'",
+        );
+        rejects_without_output(
+            "import std::Array; int[] a = []; Array::push(a, 2); use std::Array;",
+            "requiere un 'use std::Array;' anterior",
+        );
+        rejects_without_output(
+            "import std::Array; int[] a = []; a.push(1)",
+            "Se esperaba ';'",
+        );
+        rejects_without_output(
+            "import std::Array; int[] a = []; a.push(1,);",
+            "Se esperaba un literal",
+        );
+    }
+
+    #[test]
+    fn mutations_evaluate_once_in_order_and_short_circuit() {
+        assert_eq!(
+            output(
+                "import std::Array; int[][] a = [[10], [20]]; int[] indices = [0, 1]; a[indices.pop()].push(indices.pop()); println(a); println(indices); int[] b = [1, 2, 3]; b.push(b.pop()); println(b); println(b.pop() - b.pop()); println(true || b.pop() == 1); println(false && b.pop() == 1); println(b);"
+            ),
+            "[[10], [20, 0]]\n[]\n[1, 2, 3]\n1\ntrue\nfalse\n[1]\n"
+        );
+        assert_eq!(
+            output("import std::Array; int[] a = [1, 0]; a[a.pop()] = 7; println(a);"),
+            "[7]\n"
+        );
+    }
+
+    #[test]
+    fn mutation_runtime_errors_preserve_output_and_do_not_panic() {
+        for (source, error) in [
+            (
+                "int[] a = []; println(\"previo\");\na.\npop();",
+                "Línea 3: No se puede hacer 'pop' de un array vacío",
+            ),
+            (
+                "int[] a = []; println(\"previo\");\nstd::Array::pop(a);",
+                "Línea 2: No se puede hacer 'pop' de un array vacío",
+            ),
+            (
+                "int[][] a = [[]]; println(\"previo\");\na[2].push(1 / 0);",
+                "Línea 2: índice 2 fuera de rango",
+            ),
+            (
+                "int[] a = []; println(\"previo\"); a.push(1 / 0);",
+                "división o resto por cero",
+            ),
+            (
+                "int[] a = [1]; println(\"previo\"); a[0] = a.pop();",
+                "destino quedó fuera de rango",
+            ),
+            (
+                "int[] a = [1]; println(\"previo\"); a[0] += a.pop();",
+                "destino quedó fuera de rango",
+            ),
+            (
+                "int[][] a = [[1]]; println(\"previo\"); a[0].push(a.pop()[0]);",
+                "destino quedó fuera de rango",
+            ),
+            (
+                "int[][] a = [[1]]; println(\"previo\"); a[0][a.pop()[0]]++;",
+                "destino quedó fuera de rango",
+            ),
+        ] {
+            let mut bytes = Vec::new();
+            let actual = run(
+                &format!("import std::Array; {source} println(\"posterior\");"),
+                &mut bytes,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(actual.contains(error), "{source}: {actual}");
+            assert_eq!(bytes, b"previo\n");
+        }
     }
 
     #[test]

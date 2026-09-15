@@ -16,6 +16,7 @@ cargo run -- examples/condiciones.oki
 cargo run -- examples/bucles.oki
 cargo run -- examples/asignaciones.oki
 cargo run -- examples/biblioteca_arrays.oki
+cargo run -- examples/modificar_arrays.oki
 ```
 
 Cargo compila el intérprete y lo ejecuta. El separador `--` hace que la ruta llegue al programa como argumento. Se usa el primer argumento; los adicionales se ignoran. `.oki` es la extensión del proyecto, pero no se comprueba la extensión.
@@ -163,7 +164,7 @@ Produce `[1, 5, 7]`, `10`, `[10, 5, 7]` y `[10, 99, 7]`, cada uno en su línea.
 - Un array vacío se escribe `[]` y necesita el contexto de una declaración o asignación: `int[] vacio = [];`, `vacio = [];`. También puede recibir el contexto de un literal exterior cuyo tipo ya se conoce. `println([]);`, `println([[], [1]]);` y comparar una variable directamente con `[]` se rechazan porque ahí no se proporciona el tipo esperado. Se puede declarar el vacío e imprimirlo o comparar dos variables vacías del mismo tipo.
 - Se accede con `array[índice]`. El índice debe ser `int` y estar entre `0` y la longitud menos uno. Se admiten expresiones como `numeros[1 + 1]`, lecturas de literales como `[10, 20][0]` y asignaciones `numeros[0] = 10;`. Solo un nombre declarado seguido de índices puede ser destino de asignación.
 - Un índice negativo o mayor o igual que la longitud produce un error durante la ejecución. No se aceptan índices negativos para contar desde el final. La comprobación de límites también se aplica al escribir: no añade elementos ni amplía el array. El error señala la línea del corchete `[` del acceso, conserva la salida previa y detiene las instrucciones posteriores.
-- La longitud no forma parte del tipo. Se puede reemplazar todo el array por otro del mismo tipo y distinta longitud: `numeros = [4, 5];`. La biblioteca `std::Array` permite consultar la longitud con `.len()`. No hay métodos para añadir o eliminar elementos ni extraer intervalos.
+- La longitud no forma parte del tipo. Se puede reemplazar todo el array por otro del mismo tipo y distinta longitud: `numeros = [4, 5];`. La biblioteca `std::Array` permite consultar la longitud con `len`, añadir al final con `push` y eliminar el último elemento con `pop`. No se pueden insertar o eliminar posiciones arbitrarias ni extraer intervalos.
 - Las copias son independientes, incluidos todos los arrays interiores. `const` impide tanto sustituir el array como escribir sus elementos, a cualquier profundidad. Una copia declarada sin `const` sí puede cambiar.
 - `==` y `!=` comparan contenido, orden y longitud entre arrays del mismo tipo, también anidados. No se admite aritmética, concatenación, lógica ni comparaciones de orden sobre arrays completos.
 - Al imprimir se usan corchetes y comas. Dentro del array, cadenas y caracteres llevan comillas: `["Ana", "世界"]`, `['ñ', '🦀']`. Se conserva el texto original, sin introducir escapes; este formato es para lectura y no garantiza poder volver a analizarlo como código si el texto contiene comillas o saltos de línea. Al imprimir un elemento aislado se conserva el formato del tipo básico.
@@ -226,7 +227,7 @@ Produce `3`, `3` y `3`, cada uno en su línea. Un **método** se llama sobre un 
 - Admite arrays de cualquiera de los tipos actuales, incluidos vacíos declarados, constantes y arrays anidados. Cuenta los elementos del nivel consultado: para `int[][] tabla = [[], [1, 2, 3]];`, `tabla.len()` es `2` y `tabla[1].len()` es `3`.
 - La consulta no modifica el array. Refleja su valor en ese momento y se puede usar en condiciones, índices y operaciones: `for (int i = 0; i < numeros.len(); i++) { println(numeros[i]); }`.
 - Se admiten receptores que sean expresiones de array, como `[10, 20].len()`, `(numeros).len()` o `tabla[0].len()`. Los vacíos conservan la regla de tipo: `int[] vacio = []; println(vacio.len());` funciona después del `import`, pero `[].len()` y `std::Array::len([])` se rechazan por falta de tipo de elemento.
-- Solo está implementado `len`. No hay métodos de cadenas ni funciones definidas por el usuario, importaciones de archivos, alias personalizados ni comodines. Una llamada de biblioteca se usa como expresión, por ejemplo dentro de una impresión o un inicializador; no es una instrucción suelta.
+- Están implementados `len`, `push` y `pop`. Una llamada puede ser una instrucción completa con `;`, descartando su resultado si lo tiene. `len` y `pop` también se usan como expresiones; `push` no devuelve un valor. No hay métodos de cadenas ni funciones definidas por el usuario, importaciones de archivos, alias personalizados ni comodines.
 
 Este programa es **inválido** y no imprime nada:
 
@@ -243,6 +244,42 @@ Línea 3: El método 'len' requiere un 'import std::Array;' anterior.
 Las bibliotecas o métodos desconocidos, la falta de `import`/`use`, los argumentos incorrectos y el uso de `len` sobre otro tipo se detectan antes de ejecutar el archivo. Si falla la evaluación del array, por ejemplo en `[1 / 0].len()`, el error sucede durante la ejecución y conserva la salida previa.
 
 El ejemplo [biblioteca_arrays.oki](../examples/biblioteca_arrays.oki) imprime `3` tres veces, después `10`, `20`, `30` y finalmente `0`, cada valor en su línea.
+
+### Añadir y eliminar elementos
+
+`push` añade un elemento al final del array. `pop` elimina el último y devuelve ese elemento, con su tipo original:
+
+```oki
+import std::Array;
+use std::Array;
+int[] numeros = [];
+for (int i = 1; i <= 3; i++) {
+    numeros.push(i);
+}
+std::Array::push(numeros, 4);
+Array::push(numeros, 5);
+int ultimo = numeros.pop();
+println(ultimo);
+println(Array::pop(numeros));
+println(numeros);
+```
+
+Imprime `5`, `4` y `[1, 2, 3]` en líneas separadas.
+
+| Operación | Método sobre el array | Llamada por biblioteca | Resultado |
+| --- | --- | --- | --- |
+| Añadir al final | `numeros.push(4);` | `std::Array::push(numeros, 4);` | No devuelve valor. |
+| Eliminar el último | `numeros.pop()` | `std::Array::pop(numeros)` | El elemento eliminado. |
+
+- Las dos formas requieren un `import std::Array;` anterior. Con `use std::Array;` se admite también `Array::push` y `Array::pop`. Igual que con `len`, no se habilitan funciones sueltas `push(numeros, 4)` ni `pop(numeros)`.
+- El destino debe ser una variable array sin `const` o uno de sus subarrays: `tabla[0].push(4);`, `std::Array::pop(tabla[0]);`. Se permiten paréntesis alrededor del destino. No se puede modificar un literal, un array devuelto por otra llamada ni una constante, a ninguna profundidad.
+- `push` exige exactamente el tipo del elemento, sin conversiones. Para `int[][] tabla = [];`, `tabla.push([]);` es válido: el tipo del destino proporciona el contexto del nuevo subarray vacío. Las copias siguen siendo independientes, incluidos los arrays insertados o extraídos.
+- `push` se usa como instrucción con `;`. `println(numeros.push(4));` es un error antes de ejecutar. `pop` puede aparecer en un inicializador, una impresión, una operación o como instrucción que descarta el valor: `numeros.pop();`.
+- `pop` sobre un vacío produce un error de ejecución en la línea del nombre `pop`, conserva la salida previa y detiene el programa. No devuelve `null` ni un valor por defecto.
+- Se resuelve el destino evaluando sus índices una sola vez, de izquierda a derecha, y después se evalúa el elemento de `push`. `numeros.push(numeros.pop());` quita el último y lo vuelve a añadir. Si una llamada dentro de un índice o un argumento elimina parte del destino, se vuelven a comprobar las posiciones antes de escribir. Si ya no existen, se informa de que el destino quedó fuera de rango, en la línea de la variable raíz. Los efectos de llamadas que ya terminaron no se deshacen ante un error posterior.
+- `len` refleja la longitud actual. El cortocircuito puede omitir un `pop` en el operando derecho de `&&` o `||`. `foreach` sigue recorriendo una copia tomada al entrar, aunque se añadan o eliminen elementos del original durante el bucle. Las llamadas se permiten en el cuerpo de `for`; su inicialización y actualización conservan las formas de declaración/asignación ya documentadas.
+
+El ejemplo [modificar_arrays.oki](../examples/modificar_arrays.oki) imprime `[1, 2, 3, 4]`, `4`, `3`, `[1, 2]`, `2`, `1` y `0`, en líneas separadas.
 
 ## Operaciones básicas
 
@@ -473,15 +510,17 @@ Mar
 
 Todavía no hay conversión explícita de tipos, operaciones de bits, potencia, acceso por índice a cadenas ni métodos de cadenas, comentarios ni funciones definidas por el usuario. Los bucles `while`, `for` y `foreach` no admiten `break` ni `continue`, y el `for` exige sus tres partes. Las asignaciones abreviadas `+=`, `-=`, `++` y `--` son instrucciones, no expresiones: no se usan dentro de `println` ni como valor de una declaración. No hay prefijos `++x`/`--x` ni el resto de operadores compuestos (`*=`, `/=`, `%=`). No hay un bloque suelto ni una instrucción que declare un ámbito por sí misma más allá del cuerpo de un `if` o de un bucle. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
 
-No existen `var`, `let`, `auto`, `any`, `null`, `void`, alias como `double` o `long`, tipos sin signo, otras colecciones, clases ni tipos definidos por el usuario. Se dispone de los cinco tipos básicos y arrays homogéneos, es decir, de elementos del mismo tipo. `print` y `println` siguen siendo instrucciones reservadas. Las llamadas de biblioteca se limitan a `std::Array::len`, `Array::len` y `.len()` con las directivas descritas arriba; no existe un sistema general de funciones.
+No existen `var`, `let`, `auto`, `any`, `null`, `void`, alias como `double` o `long`, tipos sin signo, otras colecciones, clases ni tipos definidos por el usuario. Se dispone de los cinco tipos básicos y arrays homogéneos, es decir, de elementos del mismo tipo. `print` y `println` siguen siendo instrucciones reservadas. Las llamadas de biblioteca se limitan a `len`, `push` y `pop` de `std::Array`, como métodos o por ruta, con las directivas descritas arriba; no existe un sistema general de funciones.
 
 La ejecución recorre un árbol de sintaxis. No se genera código máquina ni bytecode y no se han medido prestaciones.
 
 ## Qué se comprueba
 
+Las siete pruebas de modificación comprueban `push` y `pop` en las dos sintaxis, las rutas completa y corta, los cinco tipos, arrays anidados y vacíos, copias, constantes, ámbitos, construcción en bucles, `foreach`, orden de evaluación, cortocircuito, errores y destinos invalidados por llamadas interiores. Incluyen `modificar_arrays.oki`.
+
 Las nueve pruebas de biblioteca verifican las tres formas de llamada, importación y nombre corto en orden, aislamiento entre ejecuciones, arrays de todos los tipos, constantes, vacíos y anidados, composición con expresiones y bucles, sintaxis incompleta, métodos y rutas desconocidos, tipos y argumentos incorrectos, líneas de error, cortocircuito y conservación de salida ante errores de ejecución. Incluyen el ejemplo `biblioteca_arrays.oki` y conservan la prueba de `hello.oki`.
 
-Las 70 pruebas de [src/main.rs](../src/main.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Las cinco pruebas nuevas de bucles cubren el ejemplo `bucles.oki`, la repetición de `while`, el orden inicialización-condición-cuerpo-actualización del `for`, la actualización de elementos por índice, el ámbito propio del contador, la ocultación de nombres, el recorrido y la copia de elementos de `foreach` (incluidos arrays anidados y vacíos), la comprobación del tipo de elemento, el rechazo de `for` con constante y las condiciones y sintaxis inválidas de los tres bucles. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa. Las seis pruebas nuevas de asignaciones abreviadas cubren el ejemplo `asignaciones.oki`, el incremento y decremento de `int` y `float`, `+=` y `-=` con los tipos admitidos, la actualización de elementos de array (también anidados), el uso en la cabecera del `for`, el rechazo de constantes, las combinaciones de tipos incompatibles, la sintaxis incompleta (incluido el prefijo `++x`, que no se admite) y el desbordamiento en ejecución.
+Las 77 pruebas de [src/main.rs](../src/main.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Las cinco pruebas nuevas de bucles cubren el ejemplo `bucles.oki`, la repetición de `while`, el orden inicialización-condición-cuerpo-actualización del `for`, la actualización de elementos por índice, el ámbito propio del contador, la ocultación de nombres, el recorrido y la copia de elementos de `foreach` (incluidos arrays anidados y vacíos), la comprobación del tipo de elemento, el rechazo de `for` con constante y las condiciones y sintaxis inválidas de los tres bucles. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa. Las seis pruebas nuevas de asignaciones abreviadas cubren el ejemplo `asignaciones.oki`, el incremento y decremento de `int` y `float`, `+=` y `-=` con los tipos admitidos, la actualización de elementos de array (también anidados), el uso en la cabecera del `for`, el rechazo de constantes, las combinaciones de tipos incompatibles, la sintaxis incompleta (incluido el prefijo `++x`, que no se admite) y el desbordamiento en ejecución.
 
 ```sh
 cargo fmt -- --check

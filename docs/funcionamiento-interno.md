@@ -84,7 +84,8 @@ El **parser**, o analizador sintáctico, comprueba cómo encajan los tokens. [pa
 ```text
 program     → statement* EOF
 statement   → simpleStmt ";" | ifStmt | whileStmt | forStmt | foreachStmt
-simpleStmt  → declaration | assignment | printStmt | importStmt
+simpleStmt  → declaration | assignment | printStmt | importStmt | callStmt
+callStmt    → postfix  (su nodo exterior debe ser LibraryCall)
 importStmt  → ("import" | "use") path
 path        → IDENTIFIER ("::" IDENTIFIER)*
 ifStmt      → "if" "(" expression ")" block ("else" (ifStmt | block))?
@@ -118,7 +119,7 @@ primary     → STRING | CHAR | "true" | "false" | NUMBER | IDENTIFIER
 La forma léxica de `NUMBER` es `dígitos ("." dígitos)? (("e" | "E") ("+" | "-")? dígitos)?`. Cada grupo de dígitos contiene al menos uno; el signo inicial se maneja en `unary()`.
 
 1. `parse()` recoge instrucciones hasta `Eof`.
-2. `statement()` distingue por el primer token las sentencias simples (declaración, modificación de variable, impresión), que exigen el `;` final, y las que terminan en `}` ( `if`, `while`, `for` y `foreach`), que no lo llevan. `declaration()` consume el `const` opcional, delega el tipo en `array_type()` y recoge nombre e inicializador. `assignment()` recoge el nombre y los índices opcionales y, según el token siguiente, construye una asignación (`=`), una asignación compuesta (`+=`, `-=`) o un incremento/decremento (`++`, `--`); se separa de `statement()` para poder reutilizarla en la cabecera de un `for`. `array_type()` consume el tipo básico y envuelve cada par `[]` en `Type::Array`.
+2. `statement()` distingue por el primer token las sentencias simples (declaración, modificación de variable, llamada, impresión), que exigen el `;` final, y las que terminan en `}` ( `if`, `while`, `for` y `foreach`), que no lo llevan. Ante un identificador, paréntesis o corchete analiza `postfix()`: si obtiene una llamada la envuelve en `Stmt::Call`; en otro caso vuelve al inicio para analizar la asignación. Este paso solo construye el árbol, sin ejecutar sus expresiones. `declaration()` consume el `const` opcional, delega el tipo en `array_type()` y recoge nombre e inicializador. `assignment()` recoge el nombre y los índices opcionales y, según el token siguiente, construye una asignación (`=`), una asignación compuesta (`+=`, `-=`) o un incremento/decremento (`++`, `--`); se separa de `statement()` para poder reutilizarla en la cabecera de un `for`. `array_type()` consume el tipo básico y envuelve cada par `[]` en `Type::Array`.
 3. `if_statement()` consume `if`, exige la condición entre paréntesis y analiza un bloque. Si aparece `else`, analiza otro bloque o encadena un `if` anidado. `block()` recoge instrucciones hasta `}` y avisa si se alcanza el final del archivo.
 4. `while_statement()` consume `while`, exige la condición y un bloque. `for_statement()` exige `(`, analiza como inicialización una declaración o una modificación de variable, y a continuación la condición y la actualización separadas por `;`; la actualización admite asignación, asignación compuesta o incremento. `foreach_statement()` exige el tipo, el nombre, la palabra reservada `in`, el array y un bloque.
 5. `name()` exige un identificador y conserva su texto y línea en `Name`.
@@ -148,6 +149,7 @@ Expr
 └── Binary { left: Box<Expr>, operator: BinaryOp, right: Box<Expr>, line }
 
 Stmt
+├── Call(Expr)
 ├── Import { path: Vec<Name>, is_use: bool, line }
 ├── Declare { declared_type, is_constant, name, initializer }
 ├── Assign { name, indices: Vec<(Expr, línea)>, value }
@@ -278,9 +280,9 @@ Println(Variable(datos))
 
 El comprobador exige elementos `Int`, registra `datos → Array(Int)` y comprueba que los índices sean `Int` y el valor asignado también. El intérprete evalúa el literal y guarda `datos → Value::Array([Int(2), Int(3)])`. Para asignar comprueba que `0` esté dentro de los límites, evalúa `datos[1] + 4` como `3 + 4` y modifica el primer elemento. La salida es `[7, 3]` con salto final.
 
-`evaluate()` construye `Value::Array` evaluando los elementos de izquierda a derecha. Para leer un `Index`, evalúa primero el array y después el índice; `array_position()` convierte el índice con `usize::try_from`, rechaza negativos o posiciones fuera de rango y devuelve la posición válida. Se copia el elemento seleccionado. En escrituras, `execute()` guarda las posiciones ya comprobadas, evalúa el nuevo valor y recorre el destino con referencias mutables para sustituir solo ese elemento. El árbol validado y la ausencia de efectos de asignación dentro de expresiones permiten usar esas posiciones sin que el destino cambie entre comprobación y escritura.
+`evaluate()` construye `Value::Array` evaluando los elementos de izquierda a derecha. Para leer un `Index`, evalúa primero el array y después el índice; `array_position()` convierte el índice con `usize::try_from`, rechaza negativos o posiciones fuera de rango y devuelve la posición válida. Se copia el elemento seleccionado. En escrituras, `execute()` guarda las posiciones ya comprobadas, evalúa el nuevo valor y recorre el destino con referencias mutables para sustituir solo ese elemento. Como `pop` puede cambiar arrays dentro de las expresiones, `target_value()` y `target_mut()` comprueban que las posiciones sigan existiendo. Un destino invalidado produce un error en la línea de la variable raíz, sin acceso fuera de límites en Rust.
 
-`int[][] tabla = [[], [1]];` tiene tipo `Array(Array(Int))`: el contexto de la declaración permite comprobar el vacío interior. Una copia de `tabla` clona ambos niveles. La igualdad usa la comparación recursiva de `Value`: comprueba longitud, orden y valores. Un índice fuera de rango como `datos[2]` se rechaza al evaluar y señala la línea de su `[`. Los arrays se guardan en `Vec`; `std::Array` permite consultar su longitud, pero todavía no hay operaciones para añadir elementos.
+`int[][] tabla = [[], [1]];` tiene tipo `Array(Array(Int))`: el contexto de la declaración permite comprobar el vacío interior. Una copia de `tabla` clona ambos niveles. La igualdad usa la comparación recursiva de `Value`: comprueba longitud, orden y valores. Un índice fuera de rango como `datos[2]` se rechaza al evaluar y señala la línea de su `[`. Los arrays se guardan en `Vec`; `std::Array` permite consultar su longitud con `len` y modificar su final con `push` y `pop`.
 
 ### Recorrido de una llamada a std::Array
 
@@ -310,13 +312,32 @@ Println(LibraryCall(path: [Array, len], receiver: None, arguments: [Variable(num
 
 [stdlib.rs](../src/stdlib.rs) concentra las reglas de la biblioteca incluida en Rust. `ArrayLibrary` guarda dos marcas: biblioteca importada y nombre corto habilitado. El comprobador las reinicia al empezar el archivo y las actualiza al encontrar `import` y `use` en orden. Rechaza estas instrucciones dentro de bloques; no habilita nombres a partir de una rama que quizá no se ejecute. Repetir una directiva ya válida no tiene efecto adicional.
 
-Para cada `LibraryCall`, `ArrayLibrary::resolve()` comprueba la ruta y las marcas y obtiene `ArrayFunction::Len`. `check_arity()` verifica el número de argumentos: cero con receptor o uno sin él. El comprobador obtiene el tipo del array y `result_type()` exige `Type::Array` y devuelve `Type::Int`. No necesita el tamaño real ni modifica el AST. Los nombres de las rutas se resuelven aparte de las variables; `use` solo habilita `Array::`, sin crear una variable llamada `Array`.
+Para cada `LibraryCall` de este ejemplo, `ArrayLibrary::resolve()` comprueba la ruta y las marcas y obtiene `ArrayFunction::Len`. `check_arity()` verifica el número de argumentos: cero con receptor o uno sin él. El comprobador obtiene el tipo del array y `result_type()` exige `Type::Array` y devuelve `Some(Type::Int)`. Este `Option` distingue las llamadas con resultado de `push`, que no devuelve valor. No necesita el tamaño real ni modifica el AST. Los nombres de las rutas se resuelven aparte de las variables; `use` solo habilita `Array::`, sin crear una variable llamada `Array`.
 
 El intérprete no realiza acciones al encontrar `Stmt::Import`: esas instrucciones ya se comprobaron. En `LibraryCall` identifica la operación, evalúa una sola vez el receptor o el único argumento y entrega su valor a `ArrayFunction::evaluate()`. `len` obtiene el número de elementos del `Vec` y lo convierte a `i64` con comprobación de rango. En el ejemplo, las tres impresiones producen `3` con salto final.
 
 La evaluación conserva la semántica actual de copia: consultar una variable array mediante `evaluate()` copia su contenido antes de medirlo. Todavía no se ha optimizado esa lectura. La llamada no escribe en el array y admite `const`. `len` solo cuenta el nivel exterior; el acceso previo de `tabla[0].len()` selecciona qué array se mide. Los errores al evaluar el receptor, como un índice fuera de rango, se propagan conservando su línea y la salida previa. El cortocircuito de `&&` y `||` puede omitir la evaluación de una llamada, pero nunca su comprobación de tipos.
 
-Una ruta, método, importación, cantidad de argumentos o tipo incorrecto falla antes de ejecutar. Los errores de llamadas señalan la línea del nombre del método; los de directivas, la de `import` o `use`. No se implementa un sistema general de funciones ni un cargador de archivos: la única biblioteca actual es `std::Array`, con `len`.
+Una ruta, método, importación, cantidad de argumentos o tipo incorrecto falla antes de ejecutar. Los errores de llamadas señalan la línea del nombre del método; los de directivas, la de `import` o `use`. No se implementa un sistema general de funciones ni un cargador de archivos: la única biblioteca actual es `std::Array`, con `len`, `push` y `pop`.
+
+### Recorrido de push y pop
+
+```oki
+import std::Array;
+int[][] tabla = [[]];
+tabla[0].push(4);
+int ultimo = std::Array::pop(tabla[0]);
+println(ultimo);
+println(tabla);
+```
+
+El scanner no necesita nuevos tokens: `push` y `pop` son identificadores. El parser conserva `LibraryCall` para ambas formas. La instrucción de inserción se representa como `Call(LibraryCall(path: [push], receiver: Index(Variable(tabla), Int(0)), arguments: [Int(4)]))`. El inicializador de `ultimo` contiene `LibraryCall(path: [std, Array, pop], receiver: None, arguments: [Index(Variable(tabla), Int(0))])`.
+
+`TypeChecker::check_call()` resuelve la operación y comprueba su cantidad de argumentos. `Expr::into_target()` descompone una variable seguida de índices en el nombre raíz y su lista de accesos; rechaza literales y resultados temporales. La comprobación reutiliza `assignment_target()` para impedir cambios sobre constantes, también anidadas. Para `push`, el tipo del elemento del destino se entrega como contexto al argumento: así se acepta `tabla.push([])`. `result_type()` devuelve `None` para `push` y `Some(tipo_del_elemento)` para `pop`. `Stmt::Call` permite descartar el resultado; si una expresión necesita el valor de `push`, se rechaza antes de ejecutar. No se añade un tipo `void` al lenguaje.
+
+`Interpreter::evaluate()` recibe ahora `&mut self`, porque evaluar `pop` cambia el entorno. `evaluate_call()` resuelve el ámbito y los índices con `resolve_target()`, evalúa el argumento de `push` y obtiene el almacenamiento mediante `target_mut()`. `ArrayFunction::evaluate()` recibe ese valor por referencia mutable y opera sobre su `Vec`: `push` añade y `pop` extrae el último elemento. En el ejemplo, `tabla` pasa de `[[]]` a `[[4]]` y vuelve a `[[]]`; `ultimo` guarda `Value::Int(4)`. Se imprime `4` y `[[]]`.
+
+Los índices se evalúan una sola vez, antes del argumento que se va a insertar. Si una llamada interior elimina parte del destino, se comprueban de nuevo las posiciones guardadas; no se repiten las expresiones de los índices. Por ejemplo, `int[] a = [1]; a[0] = a.pop();` extrae `1` y después falla al escribir en la posición que ya no existe. Los efectos completados no se deshacen. `pop` de un vacío falla en la línea de su nombre. Los errores conservan la salida previa. Se mantienen la evaluación de izquierda a derecha, el cortocircuito y el recorrido de una copia en `foreach`.
 
 ### Recorrido de una constante
 

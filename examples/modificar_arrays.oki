@@ -1,0 +1,19 @@
+import std::Array;
+use std::Array;
+
+int[] numeros = [];
+for (int i = 1; i <= 3; i++) {
+    numeros.push(i);
+}
+std::Array::push(numeros, 4);
+println(numeros);
+println(numeros.pop());
+println(Array::pop(numeros));
+println(numeros);
+
+Array::push(numeros, 9);
+std::Array::pop(numeros);
+while (numeros.len() > 0) {
+    println(numeros.pop());
+}
+println(numeros.len());
