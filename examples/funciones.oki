@@ -1,0 +1,46 @@
+function saludar(string nombre) {
+    println("Hola, " + nombre);
+}
+
+int total = 0;
+function acumular(inout int destino, int valor) {
+    destino += valor;
+}
+
+function sumar(int a, int b) -> int {
+    return a + b;
+}
+
+function mayor(int a, int b) -> int {
+    if (a > b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+function imprimir_mayores(int[] numeros, int umbral) {
+    foreach (int n in numeros) {
+        if (n > umbral) {
+            println(n);
+        }
+    }
+}
+
+function cuenta_atras(int n) {
+    if (n > 0) {
+        println(n);
+        cuenta_atras(n - 1);
+    }
+}
+
+saludar("Ana");
+saludar("世界");
+acumular(inout total, 4);
+acumular(inout total, 6);
+println(total);
+println(sumar(2, 3));
+println(mayor(10, 7));
+println(sumar(sumar(1, 2), mayor(4, 6)));
+imprimir_mayores([10, 3, 25], 5);
+cuenta_atras(3);

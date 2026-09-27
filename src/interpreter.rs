@@ -1,16 +1,46 @@
-use std::{collections::HashMap, error::Error, io::Write};
+use std::{collections::HashMap, error::Error, io::Write, rc::Rc};
 
 use crate::{
-    parser::{BinaryOp, Expr, Name, Stmt, UnaryOp},
+    parser::{BinaryOp, CallArgument, Expr, Name, Stmt, UnaryOp},
     stdlib::{ArrayFunction, casting},
     value::Value,
 };
+
+// La recursión sin fin no debe abortar el proceso: se detiene con un error
+// propio cuando se superan demasiadas llamadas anidadas.
+const MAX_CALL_DEPTH: usize = 100;
+
+// Cuerpo ya resuelto de una función propia. Se guarda tras un `Rc` para
+// clonar la definición al llamarla sin duplicar sus instrucciones.
+struct FunctionDef {
+    parameters: Vec<Name>,
+    body: Vec<Stmt>,
+}
+
+// Un alias inout apunta al almacenamiento de una llamada anterior, que sigue
+// vivo hasta que regresemos. Nunca se guarda un alias dentro de un Value.
+enum Binding {
+    Owned(Value),
+    Alias { scope: usize, name: String },
+}
 
 // El entorno de ejecución relaciona cada nombre con su valor actual.
 // Cada bloque abre un ámbito nuevo; el último de la pila es el actual.
 pub struct Interpreter<W: Write> {
     output: W,
-    scopes: Vec<HashMap<String, Value>>,
+    scopes: Vec<HashMap<String, Binding>>,
+    functions: HashMap<String, Rc<FunctionDef>>,
+    call_bases: Vec<usize>,
+}
+
+// Señal de control que atraviesa bloques: los bucles consumen 'break' y
+// 'continue', y un 'return' viaja hasta la llamada más cercana cerrando los
+// ámbitos por el camino. `Return(None)` corresponde a `return;` sin valor.
+enum Control {
+    None,
+    Break,
+    Continue,
+    Return(Option<Value>),
 }
 
 impl<W: Write> Interpreter<W> {
@@ -18,6 +48,8 @@ impl<W: Write> Interpreter<W> {
         Self {
             output,
             scopes: vec![HashMap::new()],
+            functions: HashMap::new(),
+            call_bases: Vec::new(),
         }
     }
 
@@ -29,10 +61,27 @@ impl<W: Write> Interpreter<W> {
         Ok(())
     }
 
-    fn execute(&mut self, statement: &Stmt) -> Result<(), Box<dyn Error>> {
+    fn execute(&mut self, statement: &Stmt) -> Result<Control, Box<dyn Error>> {
         match statement {
             Stmt::Call(expression) => {
                 self.evaluate_call(expression)?;
+            }
+            Stmt::Function {
+                name,
+                parameters,
+                body,
+                ..
+            } => {
+                self.functions.insert(
+                    name.text.clone(),
+                    Rc::new(FunctionDef {
+                        parameters: parameters
+                            .iter()
+                            .map(|parameter| parameter.name.clone())
+                            .collect(),
+                        body: body.clone(),
+                    }),
+                );
             }
             Stmt::Import { .. } => {}
             Stmt::Declare {
@@ -42,7 +91,7 @@ impl<W: Write> Interpreter<W> {
                 self.scopes
                     .last_mut()
                     .expect("ámbito abierto")
-                    .insert(name.text.clone(), value);
+                    .insert(name.text.clone(), Binding::Owned(value));
             }
             Stmt::Assign {
                 name,
@@ -95,18 +144,23 @@ impl<W: Write> Interpreter<W> {
                     return Err("La condición de 'if' debe ser bool.".into());
                 };
                 if condition {
-                    self.execute_block(then_branch)?;
+                    return self.execute_block(then_branch);
                 } else if let Some(else_branch) = else_branch {
-                    self.execute_block(else_branch)?;
+                    return self.execute_block(else_branch);
                 }
             }
             Stmt::While {
                 condition, body, ..
-            } => {
-                while self.evaluate_bool(condition, "while")? {
-                    self.execute_block(body)?;
+            } => loop {
+                if !self.evaluate_bool(condition, "while")? {
+                    break;
                 }
-            }
+                match self.execute_block(body)? {
+                    Control::Break => break,
+                    Control::Return(value) => return Ok(Control::Return(value)),
+                    Control::Continue | Control::None => {}
+                }
+            },
             Stmt::For {
                 initializer,
                 condition,
@@ -118,7 +172,7 @@ impl<W: Write> Interpreter<W> {
                 self.scopes.push(HashMap::new());
                 let result = self.execute_for(initializer, condition, update, body);
                 self.scopes.pop();
-                result?;
+                return result;
             }
             Stmt::Foreach {
                 name,
@@ -127,13 +181,13 @@ impl<W: Write> Interpreter<W> {
                 ..
             } => {
                 let value = self.evaluate(iterable)?;
-                let Value::Array(elements) = value else {
+                let Value::Array { elements, .. } = value else {
                     return Err("'foreach' solo recorre arrays.".into());
                 };
                 self.scopes.push(HashMap::new());
                 let result = self.execute_foreach(name, elements, body);
                 self.scopes.pop();
-                result?;
+                return result;
             }
             Stmt::Print(expression) => {
                 let value = self.evaluate(expression)?;
@@ -143,17 +197,30 @@ impl<W: Write> Interpreter<W> {
                 let value = self.evaluate(expression)?;
                 writeln!(self.output, "{value}")?;
             }
+            Stmt::Return { value, .. } => {
+                let value = match value {
+                    Some(expression) => Some(self.evaluate(expression)?),
+                    None => None,
+                };
+                return Ok(Control::Return(value));
+            }
+            Stmt::Break { .. } => return Ok(Control::Break),
+            Stmt::Continue { .. } => return Ok(Control::Continue),
         }
-        Ok(())
+        Ok(Control::None)
     }
 
-    fn execute_block(&mut self, statements: &[Stmt]) -> Result<(), Box<dyn Error>> {
+    fn execute_block(&mut self, statements: &[Stmt]) -> Result<Control, Box<dyn Error>> {
         self.scopes.push(HashMap::new());
         for statement in statements {
-            self.execute(statement)?;
+            let control = self.execute(statement)?;
+            if !matches!(control, Control::None) {
+                self.scopes.pop();
+                return Ok(control);
+            }
         }
         self.scopes.pop();
-        Ok(())
+        Ok(Control::None)
     }
 
     fn evaluate_bool(&mut self, condition: &Expr, keyword: &str) -> Result<bool, String> {
@@ -169,15 +236,18 @@ impl<W: Write> Interpreter<W> {
         condition: &Expr,
         update: &Stmt,
         body: &[Stmt],
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<Control, Box<dyn Error>> {
         self.execute(initializer)?;
         // La condición se comprueba antes de cada vuelta; la actualización
         // ocurre después del cuerpo, como en el 'for' de C.
         while self.evaluate_bool(condition, "for")? {
-            self.execute_block(body)?;
-            self.execute(update)?;
+            match self.execute_block(body)? {
+                Control::Break => break,
+                Control::Return(value) => return Ok(Control::Return(value)),
+                Control::Continue | Control::None => self.execute(update)?,
+            };
         }
-        Ok(())
+        Ok(Control::None)
     }
 
     fn execute_foreach(
@@ -185,22 +255,43 @@ impl<W: Write> Interpreter<W> {
         name: &Name,
         elements: Vec<Value>,
         body: &[Stmt],
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<Control, Box<dyn Error>> {
         for element in elements {
             // Cada vuelta reinicia la variable con una copia del elemento.
             self.scopes
                 .last_mut()
                 .expect("ámbito abierto")
-                .insert(name.text.clone(), element);
-            self.execute_block(body)?;
+                .insert(name.text.clone(), Binding::Owned(element));
+            match self.execute_block(body)? {
+                Control::Break => break,
+                Control::Return(value) => return Ok(Control::Return(value)),
+                Control::Continue | Control::None => {}
+            }
         }
-        Ok(())
+        Ok(Control::None)
     }
 
     fn scope_containing(&self, name: &str) -> Option<usize> {
-        self.scopes
-            .iter()
-            .rposition(|scope| scope.contains_key(name))
+        // Una función ve sus propios ámbitos y el global, nunca los locales
+        // del llamador. Los alias inout proporcionan el acceso explícito.
+        let base = self.call_bases.last().copied().unwrap_or(0);
+        (base..self.scopes.len())
+            .rev()
+            .find(|&index| self.scopes[index].contains_key(name))
+            .or_else(|| self.scopes[0].contains_key(name).then_some(0))
+    }
+
+    fn storage_location(&self, mut scope: usize, name: &str) -> (usize, String) {
+        let mut name = name.to_string();
+        while let Binding::Alias {
+            scope: target_scope,
+            name: target_name,
+        } = &self.scopes[scope][&name]
+        {
+            scope = *target_scope;
+            name = target_name.clone();
+        }
+        (scope, name)
     }
 
     // Evalúa cada índice una vez y consulta el destino después de sus efectos.
@@ -229,9 +320,13 @@ impl<W: Write> Interpreter<W> {
         name: &Name,
         positions: &[usize],
     ) -> Result<Value, String> {
-        let mut target = &self.scopes[scope][&name.text];
+        let (scope, storage_name) = self.storage_location(scope, &name.text);
+        let Binding::Owned(value) = &self.scopes[scope][&storage_name] else {
+            unreachable!("alias resuelto")
+        };
+        let mut target = value;
         for position in positions {
-            let Value::Array(elements) = target else {
+            let Value::Array { elements, .. } = target else {
                 unreachable!("destino validado")
             };
             target = elements.get(*position).ok_or_else(|| {
@@ -260,11 +355,16 @@ impl<W: Write> Interpreter<W> {
         name: &Name,
         positions: &[usize],
     ) -> Result<&mut Value, String> {
-        let mut target = self.scopes[scope]
-            .get_mut(&name.text)
-            .expect("nombre validado");
+        let (scope, storage_name) = self.storage_location(scope, &name.text);
+        let Binding::Owned(mut_target) = self.scopes[scope]
+            .get_mut(&storage_name)
+            .expect("nombre validado")
+        else {
+            unreachable!("alias resuelto")
+        };
+        let mut target = mut_target;
         for position in positions {
-            let Value::Array(elements) = target else {
+            let Value::Array { elements, .. } = target else {
                 unreachable!("destino validado")
             };
             target = elements.get_mut(*position).ok_or_else(|| {
@@ -277,6 +377,9 @@ impl<W: Write> Interpreter<W> {
     fn evaluate_call(&mut self, expression: &Expr) -> Result<Option<Value>, String> {
         if matches!(expression, Expr::Cast { .. }) {
             return self.evaluate(expression).map(Some);
+        }
+        if let Expr::Call { name, arguments } = expression {
+            return self.call_user_function(name, arguments);
         }
         let Expr::LibraryCall {
             path,
@@ -303,8 +406,72 @@ impl<W: Write> Interpreter<W> {
         function.evaluate(self.target_mut(scope, &target, &positions)?, value, name)
     }
 
+    // Llama a una función propia. Los argumentos se evalúan de izquierda a
+    // derecha y los parámetros viven en un ámbito nuevo que se cierra al salir.
+    fn call_user_function(
+        &mut self,
+        name: &Name,
+        arguments: &[CallArgument],
+    ) -> Result<Option<Value>, String> {
+        let function =
+            self.functions.get(&name.text).cloned().ok_or_else(|| {
+                name.error(&format!("La función '{}' no está declarada.", name.text))
+            })?;
+        let mut values = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            values.push(match argument {
+                CallArgument::Value(value) => Binding::Owned(self.evaluate(value)?),
+                CallArgument::InOut(target) => {
+                    let scope = self
+                        .scope_containing(&target.text)
+                        .expect("nombre comprobado");
+                    let (scope, name) = self.storage_location(scope, &target.text);
+                    Binding::Alias { scope, name }
+                }
+            });
+        }
+        if self.call_bases.len() >= MAX_CALL_DEPTH {
+            return Err(name.error(&format!(
+                "Se superó la profundidad máxima de llamadas ({MAX_CALL_DEPTH})."
+            )));
+        }
+        self.call_bases.push(self.scopes.len());
+        self.scopes.push(HashMap::new());
+        for (parameter, value) in function.parameters.iter().zip(values) {
+            self.scopes
+                .last_mut()
+                .expect("ámbito abierto")
+                .insert(parameter.text.clone(), value);
+        }
+        // El cuerpo usa la ruta de errores general; se conserva el mensaje y se
+        // devuelve a la ruta de evaluación, que trabaja con `String`.
+        let result = self
+            .execute_block(&function.body)
+            .map_err(|error| error.to_string());
+        self.scopes.pop();
+        self.call_bases.pop();
+        match result? {
+            Control::Return(value) => Ok(value),
+            Control::None => Ok(None),
+            Control::Break | Control::Continue => {
+                unreachable!("el comprobador rechaza saltos fuera de un bucle")
+            }
+        }
+    }
+
     fn evaluate(&mut self, expression: &Expr) -> Result<Value, String> {
         match expression {
+            Expr::TypeCheck {
+                name,
+                target,
+                negated,
+            } => {
+                let scope = self
+                    .scope_containing(&name.text)
+                    .expect("variable comprobada");
+                let value = self.target_value(scope, name, &[])?;
+                Ok(Value::Bool((value.value_type() == *target) != *negated))
+            }
             Expr::Cast {
                 path,
                 target,
@@ -318,21 +485,27 @@ impl<W: Write> Interpreter<W> {
                     .expect("ruta con nombre de método")
                     .error("'push' no devuelve un valor.")
             }),
+            Expr::Call { name, .. } => self.evaluate_call(expression)?.ok_or_else(|| {
+                name.error(&format!("La función '{}' no devuelve un valor.", name.text))
+            }),
             Expr::Literal(value) => Ok(value.clone()),
-            Expr::Variable(name) => self
-                .scopes
-                .iter()
-                .rev()
-                .find_map(|scope| scope.get(&name.text))
-                .cloned()
-                .ok_or_else(|| {
+            Expr::Variable(name) => {
+                let scope = self.scope_containing(&name.text).ok_or_else(|| {
                     name.error(&format!("La variable '{}' no está declarada.", name.text))
-                }),
-            Expr::Array { elements, .. } => elements
-                .iter()
-                .map(|element| self.evaluate(element))
-                .collect::<Result<Vec<_>, _>>()
-                .map(Value::Array),
+                })?;
+                self.target_value(scope, name, &[])
+            }
+            Expr::Array {
+                elements,
+                element_type,
+                ..
+            } => Ok(Value::Array {
+                elements: elements
+                    .iter()
+                    .map(|element| self.evaluate(element))
+                    .collect::<Result<Vec<_>, _>>()?,
+                element_type: element_type.borrow().clone().expect("array comprobado"),
+            }),
             Expr::Index { array, index, line } => {
                 let array = self.evaluate(array)?;
                 let (elements, position) =
@@ -386,7 +559,7 @@ impl<W: Write> Interpreter<W> {
         index: Value,
         line: usize,
     ) -> Result<(&[Value], usize), String> {
-        let (Value::Array(elements), Value::Int(index)) = (array, index) else {
+        let (Value::Array { elements, .. }, Value::Int(index)) = (array, index) else {
             return Err(format!(
                 "Línea {line}: se esperaba un array y un índice int."
             ));

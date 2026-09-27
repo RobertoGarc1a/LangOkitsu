@@ -40,7 +40,7 @@ const int limite = 10;
 println(limite);
 ```
 
-Una asignación posterior como `limite = 20;` es un error antes de ejecutar el archivo. `const` admite los tipos básicos y los arrays y exige un valor inicial. Consulta las [reglas de las constantes](docs/estado-actual.md#constantes).
+Una asignación posterior como `limite = 20;` es un error antes de ejecutar el archivo. `const` admite los tipos básicos, los arrays y las uniones y exige un valor inicial. Consulta las [reglas de las constantes](docs/estado-actual.md#constantes).
 
 Un **array** guarda una secuencia de elementos del mismo tipo. Los índices empiezan en cero:
 
@@ -161,7 +161,69 @@ foreach (string nombre in nombres) {
 }
 ```
 
-Los tres terminan en `}` y no llevan `;` final. Su cuerpo es siempre un bloque `{ ... }` con su propio ámbito, y la variable del `for` y la del `foreach` solo existen dentro del bucle. Consulta las [reglas de los bucles](docs/estado-actual.md#bucles).
+Los tres terminan en `}` y no llevan `;` final. Su cuerpo es siempre un bloque `{ ... }` con su propio ámbito, y la variable del `for` y la del `foreach` solo existen dentro del bucle. Dentro de cualquier bucle se puede usar `break;` para salir del más interno o `continue;` para pasar a la siguiente vuelta. Consulta las [reglas de los bucles](docs/estado-actual.md#bucles).
+
+Una **función propia** agrupa instrucciones y recibe parámetros con tipo. Se declara con `function`, solo en el ámbito global y antes de llamarla. Sin `-> tipo` no devuelve valor; con `-> tipo` devuelve un valor mediante `return`:
+
+```oki
+function saludar(string nombre) {
+    println("Hola, " + nombre);
+}
+
+function sumar(int a, int b) -> int {
+    return a + b;
+}
+
+function mayor(int a, int b) -> int {
+    if (a > b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+saludar("Ana");
+println(sumar(2, 3));
+println(mayor(10, 7));
+```
+
+Imprime `Hola, Ana`, `5` y `10`. Los parámetros y las variables locales existen solo durante la llamada; dentro se pueden leer variables globales, pero para modificarlas deben recibirse mediante un parámetro `inout`. La llamada debe indicar el número y el tipo exactos de sus argumentos. Una función con valor se usa como cualquier expresión; una sin valor, solo como instrucción `nombre(...);`. Una función con `-> tipo` debe devolver un valor de un tipo permitido por su firma en todos los caminos (`return expresión;`); una sin tipo puede usar `return;` para terminar antes. La recursión directa está permitida. Consulta las [reglas de las funciones](docs/estado-actual.md#funciones-propias) y el ejemplo [funciones.oki](examples/funciones.oki).
+
+
+El retorno también puede admitir varios tipos separados por `||`: `function test(int numero) -> int || string { ... }`. Esto se llama **tipo unión**: cada llamada devuelve un solo valor, que puede ser entero o texto. Puedes imprimir el resultado o devolverlo desde otra función que admita sus posibles tipos. También puedes declarar variables unión, como `int || string resultado = test(5);`. Los parámetros siguen exigiendo un tipo concreto. Consulta las [reglas de retornos con varios tipos](docs/estado-actual.md#retornos-con-varios-tipos) y el ejemplo [retornos_union.oki](examples/retornos_union.oki).
+
+
+Para distinguir el valor de una variable unión, usa `type variable == tipo` o `!=`. La comprobación produce un `bool` y permite usar el tipo concreto en la rama correspondiente:
+
+```oki
+int || string resultado = 5;
+if (type resultado == int) {
+    println(resultado + 1);
+} else {
+    println(resultado + "!");
+}
+resultado = "test";
+if (type resultado == string && resultado != "") {
+    println(resultado + "!");
+}
+```
+
+Imprime `6` y `test!`. Consulta las [reglas de variables unión y comprobación de tipos](docs/estado-actual.md#variables-unión-y-comprobación-de-tipos) y el ejemplo [variables_union.oki](examples/variables_union.oki).
+
+
+Para modificar una variable original desde una función, escribe `inout` tanto en el parámetro como en la llamada:
+
+```oki
+function acumular(inout int destino, int valor) {
+    destino += valor;
+}
+
+int total = 0;
+acumular(inout total, 5);
+println(total);
+```
+
+Imprime `5`. Sin `inout`, los parámetros reciben copias independientes. Omitir la marca en uno de los dos sitios, pasar una constante o escribir directamente en una global desde una función produce un error antes de ejecutar. En esta versión se pasan variables completas, de tipo básico o array; no elementos como `inout datos[0]`. Consulta las [reglas de inout](docs/estado-actual.md#parámetros-inout).
 
 ```sh
 cargo run -- examples/hello.oki
@@ -175,6 +237,9 @@ cargo run -- examples/asignaciones.oki
 cargo run -- examples/biblioteca_arrays.oki
 cargo run -- examples/modificar_arrays.oki
 cargo run -- examples/conversiones.oki
+cargo run -- examples/funciones.oki
+cargo run -- examples/retornos_union.oki
+cargo run -- examples/variables_union.oki
 ```
 
 ## Documentación para aprender
@@ -184,6 +249,7 @@ Leer en este orden:
 1. [Estado actual](docs/estado-actual.md): sintaxis, tipos, ejemplos ejecutables y límites.
 2. [Funcionamiento interno](docs/funcionamiento-interno.md): recorrido desde los caracteres hasta la salida, pasando por el árbol de sintaxis y la comprobación de tipos.
 3. [Historial de desarrollo](docs/historial.md): avances, motivos y comprobaciones.
+4. [Hoja de ruta](docs/hoja-de-ruta.md): propuestas de trabajo para avances futuros.
 
 [AGENTS.md](AGENTS.md) contiene las pautas de trabajo y establece cómo mantener esta documentación con cada avance.
 
@@ -204,7 +270,7 @@ Seguimos el intérprete de árbol de [Crafting Interpreters](https://craftingint
 | [src/stdlib.rs](src/stdlib.rs) | Habilitar por separado `Array` y `Casting`, resolver llamadas y ejecutar `len`, `push` y `pop` de arrays. |
 | [src/stdlib/casting.rs](src/stdlib/casting.rs) | Comprobar los pares de tipos convertibles y transformar valores, validando texto, rangos y Unicode. |
 
-El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad exacta. Solo se implementa el fragmento descrito en la documentación: hay llamadas a la biblioteca estándar, pero todavía no hay funciones definidas por el usuario ni máquina virtual.
+El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad sin conversiones implícitas; una unión enumera las alternativas permitidas. Solo se implementa el fragmento descrito en la documentación: hay funciones propias, con o sin valor de retorno, y llamadas a la biblioteca estándar, pero todavía no hay máquina virtual.
 
 ## Comprobaciones
 

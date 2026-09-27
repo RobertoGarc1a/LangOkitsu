@@ -1,0 +1,214 @@
+# Hoja de ruta de OkitsuLang
+
+Este documento convierte ideas en encargos pequeños y revisables. **H01, H02a y H02b están implementados; los demás hitos son propuestas y este documento no autoriza por sí mismo a desarrollarlos**. Las instrucciones del repositorio exigen un encargo del usuario para cambiar el código.
+
+## Estado de partida
+
+OkitsuLang es un intérprete de árbol en Rust. El programa se lee desde un archivo UTF-8; las etapas actuales separan scanner, parser y AST, comprobador de tipos e intérprete. La biblioteca estándar ofrece `Array` y `Casting`. El lenguaje tiene los tipos `int`, `float`, `bool`, `char`, `string` y arrays, además de declaraciones, asignaciones, `if`/`else`, `while`, `for`, `foreach`, `break`, `continue`, impresión y conversiones explícitas. Las variables requieren tipo y valor inicial. La comprobación de tipos ocurre antes de ejecutar. Hay funciones propias con parámetros tipados y valor de retorno opcional: se declaran con `function` solo en el ámbito global, usan `return`, admiten recursión directa con un límite de profundidad y exigen el tipo de retorno tras `->` cuando devuelven un valor. Los parámetros `inout` exigen la marca también en la llamada y permiten modificar variables completas del llamador. No hay estructuras, enums, entrada estándar, lectura de archivos, módulos del programa ni vistas de arrays. El `foreach` actual recorre una copia.
+
+La sintaxis de los ejemplos de **H02 a H11** es tentativa y no está implementada. Las etapas mencionadas son las responsabilidades actuales: `scanner`, `parser` (donde se define también el AST), `type_checker`, `interpreter` y `stdlib`. Cuando una característica afecte al recorrido o las responsabilidades internas, se actualizará además `docs/funcionamiento-interno.md`.
+
+## Cómo ejecutar esta hoja de ruta con agentes
+
+Cuando el usuario encargue un hito, asignarlo por defecto a un agente de menor coste disponible (por ejemplo, `gpt-6-luna`) si el alcance está acotado y las decisiones semánticas ya están cerradas. Cada encargo debe citar el identificador del hito, pedir que lea `README.md`, `docs/estado-actual.md`, esta hoja y las secciones pertinentes de `docs/funcionamiento-interno.md`, y limitar los cambios a ese hito. No se deben iniciar hitos dependientes en paralelo. El agente debe entregar cambios, pruebas y documentación; el agente coordinador revisa las decisiones, conflictos e integración.
+
+Plantilla de encargo para un agente:
+
+> Implementa únicamente el hito `[ID]` de `docs/hoja-de-ruta.md`, que el usuario ha solicitado explícitamente. Antes de editar, lee la documentación indicada por `AGENTS.md` y revisa el código relacionado. Respeta las decisiones de sintaxis y semántica del hito; no adelantes hitos posteriores. Añade pruebas de comportamiento, conserva `hello.oki`, actualiza estado, funcionamiento interno e historial según `AGENTS.md`, ejecuta las comprobaciones requeridas y comunica exactamente sus resultados. No marques otros hitos como completados.
+
+Los hitos pequeños y no solapados (por ejemplo, `break` y `continue` después de acordar su semántica) pueden encargarse a agentes económicos. Para cambios que comparten AST, tabla de símbolos, representación de valores o estrategia de memoria, asignar primero un diseño y después una implementación coordinada evita conflictos. La delegación no amplía la autorización: cada hito sigue necesitando un encargo explícito.
+
+## Orden propuesto
+
+Las dependencias indican el orden aconsejado. H01, H02a y H02b están completados; los demás hitos siguen pendientes.
+
+### H01 — `break` y `continue`
+
+**Estado: implementado el 2026-09-26.** Estas instrucciones funcionan en los bucles existentes, con cuerpos entre llaves y punto y coma obligatorio.
+
+- **Sintaxis implementada:** `break;` y `continue;` dentro de `while`, `for` y `foreach`.
+- **Semántica implementada:** ambas instrucciones solo son válidas dentro de un bucle; los ámbitos se cierran al salir o saltar a la siguiente iteración. En `for`, `continue` ejecuta la actualización y después comprueba la condición; en `foreach`, avanza al siguiente elemento. `break` sale únicamente del bucle más cercano. No hay etiquetas ni salida de varios bucles.
+- **Etapas modificadas:** `scanner` (tokens), `parser`/AST (nuevas instrucciones), `type_checker` (validación dentro de un bucle) e `interpreter` (señal de control que atraviesa bloques). `stdlib` no cambió.
+- **Dependencias:** ninguna.
+- **Pruebas realizadas:** salida de `while`, `for` y `foreach` con salida anticipada; `continue` que omite el resto del cuerpo y ejecuta la actualización del `for`; rechazo antes de ejecutar fuera de un bucle; bucles anidados y cierre de ámbitos.
+- **Documentación actualizada:** `docs/estado-actual.md`, `docs/funcionamiento-interno.md` con un ejemplo concreto, `docs/historial.md` y enlace desde `README.md`.
+
+### H02 — Funciones propias, declaración y llamada
+
+**Estado: implementado el 2026-09-26 en H02a y H02b.** Nota de sintaxis: la palabra reservada acordada inicialmente como `func` se cambió a `function` a petición del usuario antes de implementar H02b; `func` queda como un identificador normal.
+
+#### H02a — Declaraciones, parámetros y funciones que no devuelven valor
+
+**Estado: implementado el 2026-09-26.** Sintaxis implementada: `function nombre(tipo param, ...) { ... }` y llamada `nombre(argumentos);`.
+
+- **Decisiones fijadas:** `function` es palabra reservada; la declaración solo se admite en el ámbito global del archivo y antes de sus llamadas; sin `->` la función no devuelve valor ni existe `void`; cada parámetro lleva tipo obligatorio (básico o array) y no se repite nombre; la llamada exige aridad y tipos exactos, sin conversiones implícitas, y evalúa los argumentos de izquierda a derecha; una llamada sin valor solo se admite como instrucción; cada llamada abre un ámbito propio donde los parámetros y locales no escapan, y desde ella se pueden leer globales; desde la incorporación de `inout`, escribir en ellas exige recibirlas como parámetros `inout`; los nombres de función son únicos y no colisionan con variables globales; se admite la recursión directa y cada ejecución limita las llamadas anidadas a 100 para no abortar el proceso.
+- **Etapas modificadas:** `scanner` (token `Function`), `parser`/AST (`Stmt::Function` y `Expr::Call`), `type_checker` (firmas, ámbitos, colisiones y validación de llamadas) e `interpreter` (definiciones, llamada, ámbito local y límite de profundidad). `stdlib` no cambió.
+- **Dependencias:** ninguna; H02a precede a H02b.
+- **Pruebas realizadas:** nueve pruebas nuevas en `src/main.rs` y el ejemplo `funciones.oki`. Cubren parámetros básicos y de array, ámbito local, ocultación de nombres, lectura y reasignación de globales y rechazo de constantes, encadenamiento y declaración previa obligatoria, aridad y tipos exactos, rechazo de la llamada como valor, declaraciones inválidas, recursión directa, límite de profundidad, orden de evaluación de argumentos y conservación de la salida ante errores.
+- **Documentación actualizada:** `docs/estado-actual.md` con gramática y límites, `docs/funcionamiento-interno.md` con el recorrido y un ejemplo concreto, `docs/historial.md`, `README.md` y este archivo.
+
+#### H02b — Valores de retorno y funciones tipadas
+
+**Estado: implementado el 2026-09-26.** Sintaxis implementada: `function sumar(int a, int b) -> int { return a + b; }` y uso en expresiones como `int total = sumar(2, 3);`.
+
+- **Decisiones fijadas:** el tipo de retorno se escribe tras `->` y es opcional; sin `->` la función no devuelve valor y no existe la palabra `void`. `return expresión;` devuelve un valor que debe coincidir exactamente con el tipo indicado; `return;` sin expresión solo vale en funciones sin retorno; `return` fuera de una función es un error. Una función con `-> tipo` debe devolver un valor en todos los caminos, con un análisis conservador (un `return` directo o un `if`/`else` con ambas ramas devolviendo; un bucle no garantiza el retorno). Una función con valor se usa como cualquier expresión; `return` interrumpe bucles y bloques hasta la llamada. Las funciones leen globales; desde la incorporación de `inout`, escribir en ellas exige recibirlas como parámetros `inout`.
+- **Etapas modificadas:** `scanner` (tokens `Return` y `Arrow`), `parser`/AST (`return_type`, `Stmt::Return`), `type_checker` (tipo en la firma, pila `return_types` y análisis de rutas) e `interpreter` (señal `Control::Return` propagada por bloques y bucles, valor devuelto por la llamada). `stdlib` no cambió.
+- **Dependencias:** H02a y las decisiones de firma, ámbito y llamada.
+- **Pruebas realizadas:** siete pruebas nuevas más en `src/main.rs` (dieciséis de funciones en total) y el ejemplo `funciones.oki` ampliado. Cubren el retorno de cada tipo básico, la composición de llamadas con valor, el retorno en ramas y bucles, la recursión tipada, la coincidencia exacta del tipo, la cobertura de todos los caminos, `return` fuera de función, el `return;` sin valor y la convivencia de funciones con y sin retorno.
+- **Documentación actualizada:** `docs/estado-actual.md` con la nueva sintaxis y los límites, `docs/funcionamiento-interno.md` con la comprobación y la propagación del retorno, `docs/historial.md`, `README.md` y este archivo.
+
+### H03 — Operaciones de texto
+
+**Estado: pendiente; no implementado.** Ampliar las operaciones para `string` de manera coherente con la biblioteca estándar existente.
+
+- **Sintaxis tentativa:** métodos como `texto.len()`, `texto.contains("x")`, `texto.starts_with("x")` y `texto.substring(inicio, fin)`, habilitados con una biblioteca `std::String`; los nombres y si se usa biblioteca quedan por decidir. `len` devolvería una cantidad de valores escalares Unicode o bytes, decisión que debe quedar explícita.
+- **Semántica por decidir:** unidad de longitud e índices (bytes, escalares Unicode o grafemas), límites y fragmentos vacíos, qué ocurre ante índices fuera de rango, si las operaciones son puras y si `substring` devuelve una copia. No prometer manipulación de grafemas sin una estrategia Unicode definida.
+- **Etapas:** principalmente `stdlib` y `type_checker` para disponibilidad, firmas y tipos de argumentos; `interpreter` para evaluar métodos. `scanner`/`parser`/AST solo si se adopta una sintaxis nueva de método; reutilizar la llamada actual si es suficiente.
+- **Dependencias:** ninguna obligatoria; conviene decidir convenciones junto con H07, que introduce errores recuperables.
+- **Pruebas observables:** cadena vacía, ASCII y Unicode, resultado y tipo correcto, biblioteca sin habilitar, argumentos incompatibles y límites acordados.
+- **Documentación al implementarlo:** estado con unidad Unicode y errores; funcionamiento interno si cambian llamadas; ejemplo, historial y enlace desde README.
+
+### H04 — Estructuras con campos
+
+**Estado: pendiente; no implementado.** Añadir tipos de datos nombrados que agrupen valores heterogéneos.
+
+- **Sintaxis tentativa:** `struct Persona { string nombre; int edad; }`, construcción `Persona { nombre: "Ana", edad: 30 }` y acceso `persona.edad`.
+- **Semántica por decidir:** lugar de declaración, visibilidad, orden o no de campos al construir, inicialización obligatoria de todos los campos, mutabilidad por campo, igualdad, copia frente a alias, tipos anidados y referencias recursivas. Empezar con estructuras de valor y campos obligatorios es el alcance más pequeño.
+- **Etapas:** `scanner` (posible token `struct` y acceso `.`), `parser`/AST (declaración, construcción y campo), `type_checker` (registro de tipos y validación de campos) e `interpreter`/`value` (representación y lectura/escritura de campos). `stdlib` no se requiere.
+- **Dependencias:** H02 ayuda a usar estructuras en funciones, pero no es requisito técnico; no incluir métodos en este hito.
+- **Pruebas observables:** construir e imprimir/leer campos según formato definido, tipos incompatibles, campo inexistente, campo omitido/duplicado, tipo declarado duplicado y reglas de mutación.
+- **Documentación al implementarlo:** estado con construcción y acceso; funcionamiento interno con un ejemplo que conecte AST, tipo y valor; ejemplo, historial y enlaces.
+
+### H05 — Enums y `match`
+
+**Estado: pendiente; no implementado.** Representar un conjunto cerrado de alternativas y elegir ramas de forma comprobable.
+
+#### H05a — Enums sin datos
+
+- **Sintaxis tentativa:** `enum Estado { Pendiente, Hecho }` y `Estado::Hecho`.
+- **Semántica por decidir:** ámbito de los nombres de variante, igualdad, representación e impresión, y si se exige calificación completa siempre.
+- **Etapas:** `scanner`, `parser`/AST, `type_checker`, `interpreter`/`value`; `stdlib` no necesaria.
+- **Dependencias:** H04 no es necesaria si las variantes aún no contienen campos.
+- **Pruebas observables:** declarar y asignar variantes, comparar del mismo enum, rechazar enum desconocido, variante desconocida y comparación de enums distintos.
+- **Documentación al implementarlo:** estado, recorrido interno de representación de variantes, ejemplo e historial; enlazar desde README.
+
+#### H05b — `match` exhaustivo
+
+- **Sintaxis tentativa:** `match estado { Estado::Pendiente => { ... }, Estado::Hecho => { ... } }`.
+- **Semántica por decidir:** si se permite un caso comodín, si las ramas son expresiones o bloques de instrucciones, valor de un `match` como expresión y reglas de ámbito por rama. La primera versión debería ser un bloque de instrucciones y exigir cubrir cada variante, sin patrones anidados.
+- **Etapas:** `scanner`, `parser`/AST, `type_checker` (exhaustividad y duplicados) e `interpreter` (selección de rama y ámbito).
+- **Dependencias:** H05a.
+- **Pruebas observables:** cada variante selecciona su rama; enum distinto, patrón repetido y rama ausente fallan antes de ejecutar; variable de rama no escapa.
+- **Documentación al implementarlo:** estado con regla de exhaustividad; funcionamiento interno con un ejemplo de análisis y ejecución; ejemplos, historial y enlaces.
+
+#### H05c — Variantes con datos (opcional)
+
+- **Sintaxis tentativa:** `enum Resultado { Ok(int valor), Error(string mensaje) }` y patrones que extraigan los campos.
+- **Semántica por decidir:** forma de los patrones, ámbito y tipo de cada dato capturado, movimiento/copia y tratamiento de datos anidados.
+- **Etapas:** `parser`/AST, `type_checker`, `interpreter`/`value`; tokens adicionales solo si la gramática lo requiere.
+- **Dependencias:** H05a y H05b; estructuras H04 no son requisito si se limitan los campos a tipos ya existentes.
+- **Pruebas observables:** construcción de cada variante, extracción de datos con tipos correctos, número/tipo incorrecto de campos y patrones no exhaustivos.
+- **Documentación al implementarlo:** actualizar las mismas guías y el historial con ejemplos funcionales.
+
+### H06 — Tipos opcionales
+
+**Estado: pendiente; no implementado.** Expresar explícitamente la presencia o ausencia de un valor.
+
+- **Sintaxis tentativa:** `int? encontrado = ...;`, `some(3)`, `none` y `match encontrado { some(valor) => ..., none => ... }`. La forma debe coordinarse con H05; puede resolverse internamente como un enum predefinido.
+- **Semántica por decidir:** si existe conversión implícita del valor a `some`, igualdad, anidamiento (`int??`), inicialización por defecto (recomendación: ninguna) y obligación de cubrir `none`.
+- **Etapas:** `scanner`/`parser` para el tipo opcional y constructores si se eligen; AST; `type_checker`; `value`/`interpreter`. `stdlib` solo si se ofrecen operaciones auxiliares.
+- **Dependencias:** H05a y preferiblemente H05b para el análisis exhaustivo; no confundir sintaxis de `?` con operadores de propagación de errores.
+- **Pruebas observables:** `some` y `none`, extracción segura, coincidencia exhaustiva y errores por tipo o rama omitida; verificar que no se evalúa una rama no seleccionada.
+- **Documentación al implementarlo:** estado con inicialización y uso; funcionamiento interno con tipo/valor; ejemplo, historial y enlaces.
+
+### H07 — Resultados y errores recuperables
+
+**Estado: pendiente; no implementado.** Permitir que una operación devuelva éxito o error como valor comprobable.
+
+- **Sintaxis tentativa:** `Resultado<int, string>`, `Ok(valor)` y `Err(mensaje)`, tratados inicialmente mediante enums genéricos si el sistema de tipos lo permite. No introducir `?` de propagación en la primera entrega.
+- **Semántica por decidir:** tipos genéricos, igualdad e impresión, convención del tipo de error, si `return` puede devolver `Err`, y cómo una función comunica fallos. Separar estos valores de los errores actuales del intérprete (errores de ejecución que detienen el programa).
+- **Etapas:** `parser`/AST para tipos genéricos y constructores, `type_checker`, `value`/`interpreter`; `stdlib` al migrar operaciones que fallen de forma recuperable.
+- **Dependencias:** H02 para funciones tipadas; H05 para distinguir variantes y leer el resultado. H06 comparte conceptos pero no es requisito.
+- **Pruebas observables:** función que devuelve `Ok` y `Err`, coincidencia en ambos casos, incompatibilidad entre parámetros genéricos, y demostrar que `Err` no detiene por sí mismo el intérprete.
+- **Documentación al implementarlo:** distinguir error como valor de fallo del lenguaje en estado y funcionamiento interno; ejemplos, historial y enlaces.
+
+### H08 — Entrada estándar y archivos
+
+**Estado: pendiente; no implementado.** Incorporar operaciones de entrada/salida a la biblioteca estándar, en lugar de añadirlas directamente al núcleo del lenguaje.
+
+#### H08a — Entrada estándar
+
+- **Sintaxis tentativa:** `import std::IO; string linea = IO::read_line();`.
+- **Semántica por decidir:** quitar o conservar el salto final, fin de entrada, bloqueo, codificación y representación del fallo. La recomendación es devolver un resultado explícito, no convertir errores de entrada en valores vacíos.
+- **Etapas:** `stdlib` para API e I/O; `type_checker` para disponibilidad y retorno; `interpreter` para invocación y propagación. Scanner/parser/AST solo si no se puede expresar como llamada de biblioteca actual.
+- **Dependencias:** H07 si el tipo de retorno es `Result`; puede aplazarse con un error de ejecución explícito, pero documentado.
+- **Pruebas observables:** lectura de una línea conocida, fin de entrada y error controlado; usar una fuente de entrada sustituible en pruebas para evitar pruebas interactivas.
+- **Documentación al implementarlo:** actualizar estado con comportamiento de EOF y errores; funcionamiento interno de I/O; ejemplo no interactivo reproducible, historial y enlaces.
+
+#### H08b — Archivos
+
+- **Sintaxis tentativa:** `IO::read_file(ruta)` y `IO::write_file(ruta, contenido)`.
+- **Semántica por decidir:** rutas relativas al directorio actual o al archivo fuente, sobrescritura frente a creación, permisos y errores, lectura UTF-8 y si se ofrecen operaciones por líneas. Definir límites de tamaño solo si se implementan.
+- **Etapas:** `stdlib`, `type_checker`, `interpreter`; AST/parser/scanner si hace falta una nueva sintaxis. H07 para comunicar fallos recuperables.
+- **Dependencias:** H08a para el módulo y H07 recomendado. Lectura binaria queda fuera del alcance inicial.
+- **Pruebas observables:** leer archivo temporal UTF-8, escribir y volver a leer, archivo inexistente, contenido no UTF-8 y permisos/error simulado cuando sea portable.
+- **Documentación al implementarlo:** estado y funcionamiento interno con límites/rutas; ejemplo reproducible, historial y enlaces.
+
+### H09 — Módulos propios
+
+**Estado: pendiente; no implementado.** Organizar programas en varios archivos. Ya existe `import`/`use` para bibliotecas estándar; no asumir que esos mecanismos soportan archivos de usuario.
+
+- **Sintaxis tentativa:** `import "utilidades.oki";` con llamadas calificadas `Utilidades::funcion(...)`, o una forma equivalente. Elegir una sola forma tras estudiar rutas y resolución de nombres.
+- **Semántica por decidir:** rutas relativas al módulo importador o a la raíz del proyecto, extensiones, ciclos, orden de evaluación, visibilidad pública/privada, nombres repetidos, importaciones transitivas y diagnóstico con ruta y línea de origen.
+- **Etapas:** lectura/coordinación en `main.rs`, `scanner`/`parser` si cambia la gramática, `type_checker` con entorno entre archivos e `interpreter` con orden de ejecución. `stdlib` debe conservar su resolución y distinguir bibliotecas estándar de módulos propios.
+- **Dependencias:** H02 para exportar funciones es muy recomendable; H04/H05 se incorporan solo al permitir exportarlas.
+- **Pruebas observables:** importar módulo simple, dos módulos, resolución desde subdirectorio, símbolo privado, ruta inexistente y ciclo según regla adoptada. Comprobar errores con archivo y línea correctos.
+- **Documentación al implementarlo:** actualizar instrucciones de ejecución/organización, funcionamiento interno del cargador y resolución, ejemplos de varios archivos, historial y enlaces.
+
+### H10 — Vistas de arrays sin copia
+
+**Estado: pendiente; no implementado.** Evitar copias al recorrer arrays, empezando por el caso observable de `foreach`. El comportamiento actual recorre una copia del array.
+
+- **Sintaxis tentativa:** mantener `foreach (int n in numeros)` sin introducir anotaciones de préstamo para el usuario. Una vista explícita, si se necesita más tarde, podría tener una forma por decidir como `int[] view = numeros.view(inicio, fin);`.
+- **Semántica por decidir:** si `foreach` observa cambios del array durante el bucle (recomendación inicial: impedir mutarlo mientras la vista vive), reglas de alias, duración, anidamiento, recolección/propiedad y si asignar una vista a variable es necesario. Debe definirse antes de cambiar la copia actual.
+- **Etapas:** `value`/representación interna, `interpreter` (iteración sin clonar), `type_checker` para impedir mutaciones incompatibles; `parser`/AST solo si se añade sintaxis explícita. `stdlib` si la API de arrays ofrece `view`.
+- **Dependencias:** decidir el modelo de mutabilidad y alias antes de H10; estructuras o funciones no son requisito.
+- **Pruebas observables:** iterar arrays vacíos y no vacíos, conservar el orden y valores, comprobar la política de mutación y demostrar mediante una comprobación interna específica que la iteración no clona el almacenamiento. La prueba de no copia no debe depender de tiempos.
+- **Documentación al implementarlo:** actualizar estado con reglas de alias/mutación; funcionamiento interno con representación y recorrido; ejemplo, historial y enlaces.
+
+### H11 — Presupuestos de coste
+
+**Estado: pendiente; no implementado.** Explorar la característica distintiva de declarar límites de copias o asignaciones y explicar su incumplimiento. Es una línea de diseño en varias etapas, no una sola instrucción.
+
+#### H11a — Definir el modelo de coste
+
+- **Sintaxis tentativa:** ningún código de OkitsuLang todavía. Documento de diseño interno con unidades medibles, alcance de un presupuesto, tratamiento de llamadas y bibliotecas, y ejemplos.
+- **Semántica por decidir:** distinguir copias lógicas, clones del almacenamiento, asignaciones del intérprete y asignaciones de Rust; decidir si los límites son estáticos, dinámicos o ambos. No prometer recuentos del código máquina con el intérprete actual.
+- **Etapas:** revisión de `value`, `interpreter`, `stdlib` y puntos de asignación; no cambios de scanner/parser/AST salvo que el diseño lo justifique.
+- **Dependencias:** H10 y una representación de arrays estable simplifican medir copias. No es requisito adoptar vistas primero, pero se debe definir cómo se cuentan.
+- **Pruebas observables:** ejemplos de contabilidad del modelo y casos límite; todavía no pruebas de sintaxis ni implementación.
+- **Documentación al completarlo:** crear un diseño en `docs/`, enlazarlo desde README y registrar la decisión en el historial si constituye un avance solicitado. Mantenerlo marcado como propuesta hasta su autorización e implementación.
+
+#### H11b — Contadores dinámicos de coste
+
+- **Sintaxis tentativa:** tras H11a, quizá `budget { copies <= 2; allocations <= 1; ... }`.
+- **Semántica por decidir:** alcance del bloque, efectos de llamadas, fallo al superar el límite y presentación del contador. Los diagnósticos deben explicar qué operación consumió el presupuesto.
+- **Etapas:** `scanner`, `parser`/AST, `type_checker` para validar unidades/límites e `interpreter`/`value`/`stdlib` para contabilidad. No medir aún código máquina.
+- **Dependencias:** H11a y definiciones estables de copias/asignaciones.
+- **Pruebas observables:** presupuesto cumplido, excedido, anidado según reglas, y costes de operaciones de arrays y biblioteca; diagnósticos reproducibles sin depender de tiempo.
+- **Documentación al implementarlo:** estado y funcionamiento interno del contador; ejemplos, historial y enlaces.
+
+#### H11c — Análisis estático o costes compilados (futuro lejano)
+
+- **Sintaxis tentativa:** solo después de H11a/H11b y de definir si habrá compilador. No fijar sintaxis todavía.
+- **Semántica por decidir:** qué garantías pueden probarse estáticamente, tratamiento de bucles y recursión, y diferencia entre el coste abstracto del lenguaje y el coste real de la máquina.
+- **Etapas:** depende de la arquitectura futura; el intérprete de árbol actual no permite afirmar el coste del código máquina.
+- **Dependencias:** H11a, evidencia de uso de H11b y una decisión independiente sobre compilación. No adelantar una máquina virtual por esta propuesta.
+- **Pruebas observables:** casos cuya cota sea demostrable y casos que deben producir “no se puede demostrar”; contrastar únicamente métricas definidas por el modelo.
+- **Documentación al implementarlo:** documentar con precisión las garantías y límites en estado y funcionamiento interno, mantener ejemplos fieles y añadir historial.
+
+## Requisitos para cerrar cualquier hito
+
+Un hito solo se considera completado después de que un encargo explícito autorice su implementación y se cumplan los requisitos de `AGENTS.md`: revisar y conservar cambios del usuario, añadir pruebas observables para cambios de comportamiento, mantener `hello.oki`, actualizar `docs/estado-actual.md`, `docs/funcionamiento-interno.md` cuando cambie el recorrido interno, `docs/historial.md` y los enlaces/ejemplos necesarios. Para cambios Rust, ejecutar `cargo fmt -- --check`, `cargo test` y `cargo clippy --all-targets -- -D warnings`; si cambia la ejecución desde archivo, ejecutar también `cargo run -- examples/hello.oki`. Registrar sin inventar cualquier comprobación que no se haya podido ejecutar.
+
+La lista es orientativa y se puede reordenar mediante un encargo del usuario. El orden no autoriza cambios; H01, H02a y H02b figuran como completados y los demás hitos siguen pendientes.

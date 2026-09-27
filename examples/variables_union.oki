@@ -1,0 +1,22 @@
+function test(int numero) -> int || string {
+    if (numero > 3) {
+        return numero;
+    } else {
+        return "test";
+    }
+}
+
+int || string resultado = test(5);
+if (type resultado == int) {
+    println(resultado + 1);
+} else {
+    println(resultado + "!");
+}
+
+resultado = test(2);
+if (type resultado == string && resultado != "") {
+    println(resultado + "!");
+}
+
+bool es_entero = type resultado == int;
+println(es_entero);

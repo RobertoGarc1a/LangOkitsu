@@ -9,6 +9,18 @@ pub enum Type {
     Char,
     String,
     Array(Box<Type>),
+    Union(Vec<Type>),
+}
+
+impl Type {
+    // Todos los tipos posibles del valor deben estar permitidos por la anotación.
+    pub fn accepts(&self, actual: &Type) -> bool {
+        match (self, actual) {
+            (_, Self::Union(types)) => types.iter().all(|kind| self.accepts(kind)),
+            (Self::Union(types), _) => types.iter().any(|kind| kind == actual),
+            _ => self == actual,
+        }
+    }
 }
 
 impl fmt::Display for Type {
@@ -20,6 +32,15 @@ impl fmt::Display for Type {
             Self::Char => "char",
             Self::String => "string",
             Self::Array(element) => return write!(f, "{element}[]"),
+            Self::Union(types) => {
+                for (index, kind) in types.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(" || ")?;
+                    }
+                    write!(f, "{kind}")?;
+                }
+                return Ok(());
+            }
         })
     }
 }
@@ -31,20 +52,23 @@ pub enum Value {
     Bool(bool),
     Char(char),
     String(String),
-    Array(Vec<Value>),
+    Array {
+        elements: Vec<Value>,
+        element_type: Type,
+    },
 }
 
 impl Value {
-    pub fn value_type(&self) -> Option<Type> {
-        Some(match self {
+    pub fn value_type(&self) -> Type {
+        match self {
             Self::Int(_) => Type::Int,
             Self::Float(_) => Type::Float,
             Self::Bool(_) => Type::Bool,
             Self::Char(_) => Type::Char,
             Self::String(_) => Type::String,
-            // Un array vacío no permite deducir el tipo a partir de sus valores.
-            Self::Array(values) => Type::Array(Box::new(values.first()?.value_type()?)),
-        })
+            // El tipo del elemento se conserva incluso cuando no quedan valores.
+            Self::Array { element_type, .. } => Type::Array(Box::new(element_type.clone())),
+        }
     }
 }
 
@@ -57,7 +81,9 @@ impl fmt::Display for Value {
             Self::Bool(value) => write!(f, "{value}"),
             Self::Char(value) => write!(f, "{value}"),
             Self::String(value) => f.write_str(value),
-            Self::Array(values) => {
+            Self::Array {
+                elements: values, ..
+            } => {
                 f.write_str("[")?;
                 for (index, value) in values.iter().enumerate() {
                     if index > 0 {

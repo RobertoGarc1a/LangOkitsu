@@ -57,6 +57,447 @@ mod tests {
     }
 
     #[test]
+    fn union_returns_execute_both_branches_and_preserve_logical_or() {
+        assert_eq!(
+            output(include_str!("../examples/retornos_union.oki")),
+            "5\ntest\n"
+        );
+        assert_eq!(
+            output(
+                r#"
+            function escoger(int n) -> int || float || bool || char || string {
+                if (n == 0) { return 7; }
+                if (n == 1) { return 2.5; }
+                if (n == 2) { return false || true; }
+                if (n == 3) { return 'ñ'; }
+                return "texto";
+            }
+            for (int n = 0; n < 5; n++) { println(escoger(n)); }
+            println(false || true && false);
+        "#
+            ),
+            "7\n2.5\ntrue\nñ\ntexto\nfalse\n"
+        );
+    }
+
+    #[test]
+    fn union_returns_forward_subsets_reordered_types_and_recursion() {
+        assert_eq!(
+            output(
+                r#"
+            function origen(int n) -> int || string {
+                if (n > 0) { return n; } else { return "fin"; }
+            }
+            function inversa(int n) -> string || int { return origen(n); }
+            function amplia(int n) -> bool || string || int { return inversa(n); }
+            function recursiva(int n) -> int || string {
+                if (n > 0) { return recursiva(n - 1); }
+                return origen(n);
+            }
+            function repetida() -> int || int { return 3; }
+            function duplicada() -> int || string || int { return origen(1); }
+            int numero = repetida();
+            println(amplia(5)); println(recursiva(2)); println(numero);
+            println(duplicada());
+        "#
+            ),
+            "5\nfin\n3\n1\n"
+        );
+        rejects_without_output(
+            "function origen() -> int || string { return 1; } function destino() -> int || bool { return origen(); }",
+            "el retorno debe ser int || bool; se recibió int || string",
+        );
+        rejects_without_output(
+            "function origen() -> int || string { return 1; } function destino() -> int { return origen(); }",
+            "el retorno debe ser int; se recibió int || string",
+        );
+    }
+
+    #[test]
+    fn union_returns_reject_wrong_types_missing_values_and_incomplete_paths() {
+        for (source, error) in [
+            (
+                "function f() -> int || string {\nreturn true;\n}",
+                "Línea 3: el retorno debe ser int || string; se recibió bool",
+            ),
+            (
+                "function f() -> int || string { return; }",
+                "debe devolver un valor de tipo int || string",
+            ),
+            (
+                "function f() -> int || string { if (true) { return 1; } }",
+                "todos los caminos",
+            ),
+            (
+                "function f() -> int || string { if (true) { return 1; } else { return false; } }",
+                "se recibió bool",
+            ),
+        ] {
+            rejects_without_output(&format!("println(\"previo\");\n{source}"), error);
+        }
+    }
+
+    #[test]
+    fn union_returns_do_not_narrow_to_a_single_type_at_call_sites() {
+        let definition = "function f() -> int || string { return 1; }";
+        for (usage, error) in [
+            ("int n = f();", "se esperaba int, se recibió int || string"),
+            (
+                "int n = 0; n = f();",
+                "se esperaba int, se recibió int || string",
+            ),
+            ("function g(int n) {} g(f());", "Argumento incompatible"),
+            ("println(f() + 1);", "el operador '+'"),
+            ("println(f() == f());", "el operador '=='"),
+            ("println(!f());", "el operador '!'"),
+            ("if (f()) { println(1); }", "bool"),
+            ("println([f(), f()]);", "tipo de elemento concreto"),
+            (
+                "import std::Casting; println(string(f()));",
+                "Conversión no admitida",
+            ),
+            (
+                "import std::Casting; println(f().cast(int));",
+                "Conversión no admitida",
+            ),
+            (
+                "import std::Array; int[] a = []; a.push(f());",
+                "se esperaba int, se recibió int || string",
+            ),
+        ] {
+            rejects_without_output(&format!("println(\"previo\"); {definition} {usage}"), error);
+        }
+    }
+
+    #[test]
+    fn union_return_arrays_use_unambiguous_context_and_remain_homogeneous() {
+        assert_eq!(
+            output(
+                r#"
+            function datos(bool vacio) -> int[] || string {
+                if (vacio) { return []; } else { return [1, 2]; }
+            }
+            function matriz() -> int[][] || string { return [[], [1]]; }
+            function varios(bool texto) -> int[] || string[] {
+                if (texto) { return ["hola"]; } else { return [3]; }
+            }
+            function vacio() -> int[] || string[] { int[] a = []; return a; }
+            println(datos(true)); println(datos(false)); println(matriz());
+            println(varios(true)); println(varios(false)); println(vacio());
+        "#
+            ),
+            "[]\n[1, 2]\n[[], [1]]\n[\"hola\"]\n[3]\n[]\n"
+        );
+        for (source, error) in [
+            (
+                "function f() -> int[] || string[] { return []; }",
+                "array es ambiguo",
+            ),
+            (
+                "function f() -> int[][] || string[][] { return [[]]; }",
+                "array es ambiguo",
+            ),
+            (
+                "function f() -> int[] || string { return [true]; }",
+                "se recibió bool[]",
+            ),
+            (
+                "function f() -> int[] || string[] { return [1, \"a\"]; }",
+                "elemento de array incompatible",
+            ),
+            (
+                "function f() -> int[] || string { return [1]; } println(f()[0]);",
+                "indexar",
+            ),
+            (
+                "import std::Array; function f() -> int[] || string { return [1]; } println(f().len());",
+                "array",
+            ),
+        ] {
+            rejects_without_output(source, error);
+        }
+    }
+
+    #[test]
+    fn union_annotations_reject_invalid_syntax_and_union_parameters() {
+        for source in [
+            "function f() -> int || {}",
+            "function f() -> || int { return 1; }",
+            "function f() -> int | string { return 1; }",
+            "function f() -> int || || string { return 1; }",
+            "function f() -> int || string",
+            "function f() -> int || string { return 1 }",
+            "function f(int || string n) {}",
+        ] {
+            rejects_without_output(source, "Línea 1:");
+        }
+    }
+
+    #[test]
+    fn union_variables_example_and_basic_type_tests() {
+        assert_eq!(
+            output(include_str!("../examples/variables_union.oki")),
+            "6\ntest!\nfalse\n"
+        );
+        assert_eq!(
+            output(
+                r#"
+            int || string || float || bool || char valor = 1;
+            println(type valor == int); println(type valor != string);
+            valor = "hola"; println(type valor == string);
+            valor = 2.5; println(type valor == float);
+            valor = true; println(type valor == bool);
+            valor = 'ñ'; println(type valor == char);
+            bool prueba = type valor != char; println(prueba);
+            int typewriter = 2; println(type typewriter == int);
+        "#
+            ),
+            "true\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\n"
+        );
+    }
+
+    #[test]
+    fn union_variables_copy_accept_subsets_and_reject_other_types() {
+        assert_eq!(
+            output(
+                r#"
+            int || string a = 5;
+            string || int || bool b = a;
+            a = "nuevo";
+            println(a); println(b);
+            const string || int || bool c = b;
+            println(c);
+            int || int n = 4; println(n + 1);
+        "#
+            ),
+            "nuevo\n5\n5\n5\n"
+        );
+        for (source, error) in [
+            ("int || string a = true;", "se recibió bool"),
+            ("int || string a = 1; a = false;", "se recibió bool"),
+            (
+                "int || string a = 1; int b = a;",
+                "se recibió int || string",
+            ),
+            (
+                "int || bool a = 1; int || string b = a;",
+                "se recibió int || bool",
+            ),
+            ("const int || string a = 1; a = 1;", "constante"),
+            ("int || string a = a;", "no está declarada"),
+            ("int || string a = 1; println(a + 1);", "el operador '+'"),
+        ] {
+            rejects_without_output(source, error);
+        }
+    }
+
+    #[test]
+    fn type_guards_narrow_then_else_else_if_and_value_arguments() {
+        assert_eq!(
+            output(
+                r#"
+            import std::Casting;
+            function doble(int n) -> int { return n * 2; }
+            function leer(bool texto) -> int || string || bool {
+                int || string || bool valor = 6;
+                if (texto) { valor = "sí"; }
+                if (type valor == int) { return doble(valor); }
+                else if (type valor == string) { return valor + "!"; }
+                else { return !valor; }
+            }
+            println(leer(false)); println(leer(true));
+            int || string valor = "hola";
+            if (type valor != int) { println(valor + "!"); }
+            else { println(valor + 1); }
+            if (!(type valor != string)) { println(string(valor)); }
+        "#
+            ),
+            "12\nsí!\nhola!\nhola\n"
+        );
+        rejects_without_output(
+            "int || string x = 1; if (type x == int) { println(x + 1); } println(x + 1);",
+            "el operador '+'",
+        );
+        rejects_without_output(
+            "int || string x = 1; bool entero = type x == int; if (entero) { println(x + 1); }",
+            "el operador '+'",
+        );
+    }
+
+    #[test]
+    fn type_guards_follow_short_circuit_truth_paths() {
+        assert_eq!(
+            output(
+                r#"
+            int || string x = 4;
+            if (type x == int && x > 3) { println(x + 2); }
+            println(type x != int || x > 3);
+            if (!(type x != int || x < 0)) { println(x + 3); }
+            x = "hola";
+            if (type x == int && x > 3) { println(x); }
+            else if (type x == string && x == "hola") { println(x + "!"); }
+            println(type x == string || x > 0);
+            if (type x != int || x < 0) { println(x); }
+            else { println(x + 10); }
+            if ((type x == int && true) || (type x == int && false)) { println(x + 1); }
+            int || string || bool tres = false;
+            if (type tres == int || type tres == string) {
+                int || string dos = tres;
+                println(dos);
+            } else { println(!tres); }
+        "#
+            ),
+            "6\ntrue\n7\nhola!\ntrue\nhola\ntrue\n"
+        );
+        rejects_without_output(
+            "int || string x = 1; if (type x == int || true) { println(x + 1); }",
+            "el operador '+'",
+        );
+        rejects_without_output(
+            "int || string x = 1; if (type x == int && true) {} else { println(x + 1); }",
+            "el operador '+'",
+        );
+        rejects_without_output(
+            "int || string x = 1; println(type x == int || desconocida);",
+            "no está declarada",
+        );
+    }
+
+    #[test]
+    fn type_guards_forget_reassignments_and_preserve_shadowing() {
+        assert_eq!(
+            output(
+                r#"
+            int || string x = 1;
+            if (type x == int) {
+                x++; x += 2; println(x + 1);
+                if (true) { string x = "local"; println(x + "!"); }
+                println(x + 1);
+                x = "cambio";
+                if (type x == string) { println(x + "!"); }
+            }
+            println(x);
+        "#
+            ),
+            "5\nlocal!\n5\ncambio!\ncambio\n"
+        );
+        for source in [
+            "int || string x = 1; if (type x == int) { x = \"hola\"; println(x + 1); }",
+            "int || string x = 1; if (type x == int) { if (true) { x = \"hola\"; } println(x + 1); }",
+            "int || string x = 1; if (type x == int) { x = 2; println(x + 1); }",
+            "int || string x = 1; if (type x == int) { string x = \"local\"; println(x + 1); }",
+        ] {
+            rejects_without_output(source, "el operador '+'");
+        }
+        rejects_without_output(
+            "const int || string x = 1; if (type x == int) { x++; }",
+            "constante",
+        );
+    }
+
+    #[test]
+    fn type_guards_work_in_loops_and_forget_previous_iterations() {
+        assert_eq!(
+            output(
+                r#"
+            int || string x = 0;
+            while (type x == int && x < 3) { println(x + 1); x++; }
+            for (int || string n = 0; type n == int && n < 3; n++) {
+                if (n == 1) { continue; }
+                println(n + 10);
+            }
+            while (type x == int) { x = "fin"; continue; }
+            println(x);
+        "#
+            ),
+            "1\n2\n3\n10\n12\nfin\n"
+        );
+        for source in [
+            "int || string x = 1; if (type x == int) { while (true) { println(x + 1); x = \"hola\"; } }",
+            "int || string x = 1; if (type x == int) { while (x > 0) { x = \"hola\"; } }",
+            "int || string x = 1; if (type x == int) { foreach (int n in [1, 2]) { println(x + 1); x = \"hola\"; } }",
+            "int || string x = 1; for (int n = 0; type x == int; x++) { x = \"hola\"; }",
+            "int || string x = 1; if (type x == int) { while (type x == int) { x = \"hola\"; break; } println(x + 1); }",
+        ] {
+            rejects_without_output(source, "el operador");
+        }
+    }
+
+    #[test]
+    fn type_guards_keep_empty_array_types_through_calls_mutation_and_copies() {
+        assert_eq!(
+            output(
+                r#"
+            import std::Array;
+            function vacio(bool texto) -> int[] || string[] {
+                if (texto) { string[] a = []; return a; } else { int[] a = []; return a; }
+            }
+            int[] || string[] datos = vacio(false);
+            println(type datos == int[]); println(type datos == string[]);
+            if (type datos == int[]) { datos.push(5); println(datos.pop()); println(type datos == int[]); }
+            string[] || int[] copia = datos;
+            datos = vacio(true);
+            println(type datos == string[]); println(type copia == int[]);
+            if (type datos == string[]) { datos.push("hola"); println(datos[0] + "!"); }
+            int[][] || string[][] tabla = [[], [1]];
+            if (type tabla == int[][]) {
+                tabla[0] = []; tabla.push([]);
+                int[] fila = tabla.pop(); println(type fila == int[]);
+                int[] otra = []; println(tabla[0] == otra);
+            }
+        "#
+            ),
+            "true\nfalse\n5\ntrue\ntrue\ntrue\nhola!\ntrue\ntrue\n"
+        );
+        rejects_without_output("int[] || string[] x = [];", "ambiguo");
+        rejects_without_output(
+            "int || string x = 1; println([x]);",
+            "tipo de elemento concreto",
+        );
+    }
+
+    #[test]
+    fn type_guards_keep_union_storage_out_of_concrete_inout_parameters() {
+        assert_eq!(
+            output(
+                r#"
+            function cambiar(inout int n) { n++; }
+            int || string x = 1;
+            if (type x == int) { int copia = x; cambiar(inout copia); println(copia); }
+        "#
+            ),
+            "2\n"
+        );
+        rejects_without_output(
+            "function cambiar(inout int n) { n++; } int || string x = 1; if (type x == int) { cambiar(inout x); }",
+            "Argumento incompatible",
+        );
+        rejects_without_output(
+            "int || string x = 1; function cambiar() { if (type x == int) { x++; } }",
+            "variable global",
+        );
+    }
+
+    #[test]
+    fn type_tests_reject_invalid_syntax_and_unknown_names_before_output() {
+        for source in [
+            "int || x = 1;",
+            "const int || string x;",
+            "int || string x = 1",
+            "int type = 1;",
+            "int x = 1; if (type x = int) {}",
+            "int x = 1; if (type x ==) {}",
+            "int x = 1; if (type x == 1) {}",
+            "int x = 1; if (type int) {}",
+            "if (type 1 == int) {}",
+            "int[] x = []; if (type x[0] == int) {}",
+            "bool x = type desconocida == int;",
+        ] {
+            rejects_without_output(&format!("println(\"previo\");\n{source}"), "Línea 2:");
+        }
+    }
+
+    #[test]
     fn executes_casting_example() {
         assert_eq!(
             output(include_str!("../examples/conversiones.oki")),
@@ -1609,6 +2050,44 @@ mod tests {
     }
 
     #[test]
+    fn break_and_continue_follow_each_loop_semantics() {
+        assert_eq!(
+            output(
+                "int i = 0; while (true) { i++; if (i == 2) { continue; } if (i == 4) { break; } print(i); } println(\"!\"); for (int n = 0; n < 5; n++) { if (n == 1) { continue; } if (n == 3) { break; } print(n); } println(\"!\"); int[] a = [1, 2, 3, 4]; foreach (int n in a) { if (n == 2) { continue; } if (n == 4) { break; } print(n); }"
+            ),
+            "13!\n02!\n13"
+        );
+    }
+
+    #[test]
+    fn loop_control_targets_inner_loop_and_closes_scopes() {
+        assert_eq!(
+            output(
+                "int n = 0; while (n < 2) { int oculto = n; n++; while (true) { if (oculto == 0) { break; } break; } println(n); }"
+            ),
+            "1\n2\n"
+        );
+        assert_eq!(
+            output(
+                "int valor = 1; while (true) { if (true) { int valor = 2; break; } } println(valor); int i = 0; while (i < 2) { i++; if (true) { int valor = 3; continue; } } println(valor);"
+            ),
+            "1\n1\n"
+        );
+    }
+
+    #[test]
+    fn loop_control_outside_a_loop_is_rejected_before_execution() {
+        rejects_without_output(
+            "println(\"previo\"); break;",
+            "solo se permite dentro de un bucle",
+        );
+        rejects_without_output(
+            "if (true) { continue; }",
+            "solo se permite dentro de un bucle",
+        );
+    }
+
+    #[test]
     fn loops_have_their_own_scope_and_allow_shadowing() {
         assert_eq!(
             output(
@@ -1824,5 +2303,526 @@ mod tests {
             output("int i = 0; i += 2 * 3; println(i); i -= 1; println(i);"),
             "6\n5\n"
         );
+    }
+
+    #[test]
+    fn executes_functions_example() {
+        assert_eq!(
+            output(include_str!("../examples/funciones.oki")),
+            "Hola, Ana\nHola, 世界\n10\n5\n10\n9\n10\n25\n3\n2\n1\n"
+        );
+    }
+
+    #[test]
+    fn functions_bind_parameters_use_scopes_and_read_globals() {
+        assert_eq!(
+            output(
+                "int base = 1; function sumar(int a, int b) { int c = a + b; println(c + base); } sumar(2, 3); base = 10; sumar(2, 3);"
+            ),
+            "6\n15\n"
+        );
+        assert_eq!(
+            output(
+                "int x = 1; function mostrar(int x) { println(x); x = 99; println(x); } mostrar(9); println(x);"
+            ),
+            "9\n99\n1\n"
+        );
+        assert_eq!(
+            output(
+                "int[] valores = [1, 2, 3]; function imprimir(int[] datos) { foreach (int n in datos) { print(n * 2); } println(\"\"); } imprimir(valores);"
+            ),
+            "246\n"
+        );
+        rejects_without_output(
+            "function f() { int local = 1; } println(local);",
+            "no está declarada",
+        );
+    }
+
+    #[test]
+    fn functions_call_only_previously_declared_names_and_chain_calls() {
+        assert_eq!(
+            output("function a() { println(\"a\"); } function b() { a(); println(\"b\"); } b();"),
+            "a\nb\n"
+        );
+        rejects_without_output("f(); function f() { }", "desconocid");
+        rejects_without_output("function b() { a(); } function a() { }", "desconocid");
+        rejects_without_output("function f() { } g();", "desconocid");
+    }
+
+    #[test]
+    fn functions_require_exact_arity_and_types_before_output() {
+        rejects_without_output(
+            "function f(int a) { }\nprintln(\"previo\");\nf(1.0);",
+            "se esperaba int, se recibió float",
+        );
+        rejects_without_output(
+            "function f(int[] a) { }\nprintln(\"previo\");\nf(1);",
+            "se esperaba int[], se recibió int",
+        );
+        rejects_without_output(
+            "function f(int a) { }\nprintln(\"previo\");\nf();",
+            "esperaba 1 argumentos",
+        );
+        rejects_without_output(
+            "function f() { }\nprintln(\"previo\");\nf(1);",
+            "esperaba 0 argumentos",
+        );
+        rejects_without_output("function f(int a) { } f(desconocida);", "no está declarada");
+    }
+
+    #[test]
+    fn functions_cannot_be_values_and_calls_are_only_statements() {
+        rejects_without_output("function f() { } int x = f();", "no devuelve un valor");
+        rejects_without_output("function f() { } println(f());", "no devuelve un valor");
+        rejects_without_output("function f() { } println(1 + f());", "no devuelve un valor");
+    }
+
+    #[test]
+    fn rejects_invalid_function_declarations_before_output() {
+        for (source, message) in [
+            ("function f() { } function f() { }", "ya está declarada"),
+            (
+                "function f() { } int f = 1;",
+                "ya está declarado como función",
+            ),
+            (
+                "int f = 1; function f() { }",
+                "ya está declarado como variable",
+            ),
+            ("function f(int a, int a) { }", "está repetido"),
+            (
+                "if (true) { function f() { } }",
+                "solo se permiten en el ámbito global",
+            ),
+            (
+                "while (false) { function f() { } }",
+                "solo se permiten en el ámbito global",
+            ),
+        ] {
+            rejects_without_output(&format!("println(\"previo\");\n{source}"), message);
+        }
+        for source in [
+            "function f { }",
+            "function (int a) { }",
+            "function f(int a { }",
+            "function f(int a,) { }",
+            "function f()",
+            "function f() { ",
+            "int function = 1;",
+        ] {
+            rejects_without_output(&format!("println(\"previo\");\n{source}"), "Línea 2:");
+        }
+        assert_eq!(output("int funcion = 1; println(funcion);"), "1\n");
+    }
+
+    #[test]
+    fn functions_allow_recursion_and_limit_call_depth() {
+        assert_eq!(
+            output(
+                "function contar(int n) { if (n > 0) { print(n); contar(n - 1); } } contar(3); println(\"\");"
+            ),
+            "321\n"
+        );
+        let mut bytes = Vec::new();
+        let error = run(
+            "function infinito() { infinito(); } infinito();",
+            &mut bytes,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("profundidad máxima de llamadas"), "{error}");
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn function_calls_evaluate_arguments_in_order_and_preserve_runtime_errors() {
+        assert_eq!(
+            output(
+                "import std::Array; function consumir(int a, int b) { println(a); println(b); } int[] datos = [1, 2]; consumir(datos.pop(), datos.pop()); println(datos);"
+            ),
+            "2\n1\n[]\n"
+        );
+        let mut bytes = Vec::new();
+        let error = run(
+            "function dividir(int a) { println(a / 0); } println(\"previo\"); dividir(5);",
+            &mut bytes,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("por cero"), "{error}");
+        assert_eq!(bytes, b"previo\n");
+    }
+
+    #[test]
+    fn functions_read_constants_and_accept_arrays_with_context() {
+        assert_eq!(
+            output("const int limite = 7; function mostrar() { println(limite); } mostrar();"),
+            "7\n"
+        );
+        rejects_without_output(
+            "const int limite = 1; function cambiar() { limite = 2; } cambiar();",
+            "No se puede reasignar la constante 'limite'.",
+        );
+        assert_eq!(
+            output(
+                "import std::Array; function longitud(int[] a) { println(a.len()); } int[] vacio = []; longitud(vacio); longitud([1, 2, 3]);"
+            ),
+            "0\n3\n"
+        );
+    }
+
+    #[test]
+    fn typed_functions_return_each_basic_type() {
+        assert_eq!(
+            output(
+                "function i() -> int { return 7; } function f() -> float { return 1.5; } function b() -> bool { return true; } function c() -> char { return 'ñ'; } function s() -> string { return \"Hola\"; } println(i()); println(f()); println(b()); println(c()); println(s());"
+            ),
+            "7\n1.5\ntrue\nñ\nHola\n"
+        );
+    }
+
+    #[test]
+    fn valued_calls_compose_in_expressions_and_branch_returns() {
+        assert_eq!(
+            output(
+                "function max(int a, int b) -> int { if (a > b) { return a; } else { return b; } } println(max(3, 8)); println(max(max(1, 5), 2) + 1);"
+            ),
+            "8\n6\n"
+        );
+    }
+
+    #[test]
+    fn valued_functions_support_arrays_recursion_and_loops() {
+        assert_eq!(
+            output(
+                "import std::Array; function factorial(int n) -> int { if (n <= 1) { return 1; } else { return n * factorial(n - 1); } } function buscar(int[] a, int objetivo) -> int { for (int i = 0; i < a.len(); i++) { if (a[i] == objetivo) { return i; } } return -1; } function primero(int[] a, int umbral) -> int { foreach (int n in a) { if (n > umbral) { return n; } } return 0; } int[] d = [5, 6, 7]; println(factorial(5)); println(buscar(d, 7)); println(primero([1, 2, 3], 1));"
+            ),
+            "120\n2\n2\n"
+        );
+    }
+
+    #[test]
+    fn return_type_must_match_and_cover_all_paths() {
+        rejects_without_output(
+            "function f() -> int { return 1.0; } println(f());",
+            "el retorno debe ser int; se recibió float",
+        );
+        rejects_without_output(
+            "println(\"previo\");\nfunction f() -> int { println(\"x\"); }",
+            "debe devolver un valor en todos los caminos",
+        );
+        rejects_without_output(
+            "function f() -> int { return; }",
+            "debe devolver un valor de tipo int",
+        );
+        rejects_without_output(
+            "function f() -> int { if (true) { return 1; } }",
+            "debe devolver un valor en todos los caminos",
+        );
+        rejects_without_output(
+            "function f() { return 1; }",
+            "no devuelve un valor; usa 'return;'",
+        );
+    }
+
+    #[test]
+    fn return_only_inside_functions_and_void_early_exit() {
+        rejects_without_output("return;", "'return' solo se permite dentro de una función");
+        rejects_without_output(
+            "if (true) { return; }",
+            "'return' solo se permite dentro de una función",
+        );
+        assert_eq!(
+            output(
+                "function salir(int n) { if (n > 0) { return; } println(\"alcanzado\"); } salir(5); salir(0);"
+            ),
+            "alcanzado\n"
+        );
+    }
+
+    #[test]
+    fn valued_and_void_functions_coexist() {
+        rejects_without_output("function v() { } println(v());", "no devuelve un valor");
+        assert_eq!(
+            output(
+                "function v() { println(\"v\"); } function g() -> int { v(); return 3; } println(g());"
+            ),
+            "v\n3\n"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_return_type_annotations() {
+        for source in [
+            "function f() -> { }",
+            "function f() -> int int { return 1; }",
+            "function f() -> 5 { return 1; }",
+        ] {
+            rejects_without_output(&format!("println(\"previo\");\n{source}"), "Línea 2:");
+        }
+        rejects_without_output("int return = 1;", "Línea 1:");
+    }
+
+    #[test]
+    fn inout_updates_originals_while_value_parameters_keep_copies() {
+        assert_eq!(
+            output(
+                r#"
+            function acumular(inout int destino, int valor) { destino += valor; }
+            function copia(int destino) { destino = 99; }
+            int total = 0;
+            acumular(inout total, 5);
+            copia(total);
+            acumular(inout total, 3);
+            println(total);
+            function cambiar(inout float f, inout bool b, inout char c, inout string s) {
+                f += 0.5; b = !b; c = 'ñ'; s += "!";
+            }
+            float precio = 1.0; bool activo = false; char letra = 'a'; string texto = "Hola";
+            cambiar(inout precio, inout activo, inout letra, inout texto);
+            println(precio); println(activo); println(letra); println(texto);
+        "#
+            ),
+            "8\n1.5\ntrue\nñ\nHola!\n"
+        );
+    }
+
+    #[test]
+    fn inout_requires_matching_modes_mutability_and_exact_types() {
+        for (source, message) in [
+            (
+                "function f(inout int n) {} int x = 0; f(x);",
+                "Falta 'inout'",
+            ),
+            (
+                "function f(int n) {} int x = 0; f(inout x);",
+                "no está declarado inout",
+            ),
+            (
+                "function f(inout int n) {} const int x = 0; f(inout x);",
+                "constante 'x'",
+            ),
+            (
+                "function f(inout int[] n) {} const int[] x = []; f(inout x);",
+                "constante 'x'",
+            ),
+            (
+                "function f(inout int n) {} float x = 0.0; f(inout x);",
+                "se esperaba int, se recibió float",
+            ),
+            (
+                "function f(inout int[] n) {} float[] x = []; f(inout x);",
+                "se esperaba int[], se recibió float[]",
+            ),
+            (
+                "function f(inout int n) {} f(inout x);",
+                "no está declarada",
+            ),
+            ("function f(inout int n) {} f();", "esperaba 1 argumentos"),
+            ("function f(inout int n, int n) {}", "está repetido"),
+        ] {
+            rejects_without_output(&format!("println(\"previo\");\n{source}"), message);
+        }
+        rejects_without_output("function f(inout int n) {}\nint x = 0;\nf(x);", "Línea 3:");
+    }
+
+    #[test]
+    fn inout_syntax_only_accepts_whole_variables_in_user_calls() {
+        for source in [
+            "function f(inout int n) {} f(inout 5);",
+            "function f(inout int n) {} int x = 0; f(inout x + 1);",
+            "function f(inout int n) {} int[] x = [0]; f(inout x[0]);",
+            "function f(inout int n) {} int x = 0; f(inout (x));",
+            "function f(inout int n) {} function g() -> int { return 0; } f(inout g());",
+            "function f(int inout n) {}",
+            "function f(inout n) {}",
+            "int inout = 0;",
+            "int x = 0; println(inout x);",
+            "import std::Array; int[] x = []; x.push(inout x);",
+            "import std::Array; int[] x = []; std::Array::len(inout x);",
+            "import std::Casting; int x = 0; float(inout x);",
+            "function f(inout int n) {} int x = 0; f(inout x)",
+        ] {
+            rejects_without_output(&format!("println(\"previo\");\n{source}"), "Línea");
+        }
+        assert_eq!(output("int inout2 = 7; println(inout2);"), "7\n");
+    }
+
+    #[test]
+    fn functions_cannot_write_globals_or_pass_them_on_as_inout() {
+        for statement in [
+            "total = 1;",
+            "total += 1;",
+            "total -= 1;",
+            "total++;",
+            "total--;",
+        ] {
+            rejects_without_output(
+                &format!("int total = 0; println(\"previo\"); function f() {{ {statement} }}"),
+                "No se puede modificar la variable global 'total'",
+            );
+        }
+        for statement in [
+            "datos[0] = 1;",
+            "datos[0]++;",
+            "datos.push(1);",
+            "datos.pop();",
+            "std::Array::push(datos, 1);",
+            "std::Array::pop(datos);",
+        ] {
+            rejects_without_output(
+                &format!("import std::Array; int[] datos = [0]; function f() {{ {statement} }}"),
+                "No se puede modificar la variable global 'datos'",
+            );
+        }
+        rejects_without_output(
+            "int x = 0; function f(inout int n) { n++; } function g() { f(inout x); } g();",
+            "No se puede modificar la variable global 'x'",
+        );
+        assert_eq!(
+            output(
+                "int x = 0; if (true) { x++; } function f(inout int n) { n++; } if (true) { f(inout x); } println(x);"
+            ),
+            "2\n"
+        );
+    }
+
+    #[test]
+    fn inout_forwards_through_calls_recursion_and_early_returns() {
+        assert_eq!(
+            output(
+                r#"
+            function sumar(inout int n, int veces) -> int {
+                if (veces == 0) { return n; }
+                n++;
+                return sumar(inout n, veces - 1);
+            }
+            function exterior(inout int n) { println(sumar(inout n, 3)); }
+            function salir(inout int n) { while (true) { n += 2; return; } }
+            function local() { int propio = 10; exterior(inout propio); salir(inout propio); println(propio); }
+            int total = 0; exterior(inout total); salir(inout total); println(total); local();
+        "#
+            ),
+            "3\n5\n13\n15\n"
+        );
+    }
+
+    #[test]
+    fn inout_respects_lexical_scope_shadowing_and_value_copies() {
+        assert_eq!(
+            output(
+                r#"
+            int total = 10;
+            function leer() -> int { return total; }
+            function cambiar(inout int destino) {
+                destino++;
+                if (true) { int destino = 100; destino++; println(destino); }
+                destino++;
+            }
+            function local(int total) {
+                println(leer()); cambiar(inout total); println(total);
+            }
+            local(1);
+            if (true) { int total = 20; println(leer()); cambiar(inout total); println(total); }
+            println(total);
+        "#
+            ),
+            "10\n101\n3\n10\n101\n22\n10\n"
+        );
+    }
+
+    #[test]
+    fn inout_arrays_support_mutation_replacement_and_independent_copies() {
+        assert_eq!(
+            output(
+                r#"
+            import std::Array;
+            function editar(inout int[][] tabla) {
+                tabla[0][0] += 4;
+                tabla[0].push(9);
+                println(tabla[0].pop());
+                tabla.push([7]);
+            }
+            function reemplazar(inout int[][] tabla) { tabla = [[42]]; }
+            function copia(int[][] tabla) { tabla[0][0] = 99; }
+            int[][] datos = [[1]]; int[][] copia_inicial = datos;
+            editar(inout datos); copia(datos); println(datos); println(copia_inicial);
+            reemplazar(inout datos); println(datos);
+            int[][] vacio = []; reemplazar(inout vacio); println(vacio);
+        "#
+            ),
+            "9\n[[5], [7]]\n[[1]]\n[[42]]\n[[42]]\n"
+        );
+    }
+
+    #[test]
+    fn inout_aliases_are_live_even_when_the_same_variable_is_passed_twice() {
+        assert_eq!(
+            output(
+                r#"
+            int total = 0;
+            function cambiar(inout int a, inout int b) {
+                a = 5; println(b); println(total); b += 2; println(a);
+            }
+            cambiar(inout total, inout total); println(total);
+            import std::Array;
+            function arrays(inout int[] a, inout int[] b) { a = [9]; b.push(10); }
+            int[] datos = []; arrays(inout datos, inout datos); println(datos);
+        "#
+            ),
+            "5\n5\n7\n7\n[9, 10]\n"
+        );
+    }
+
+    #[test]
+    fn inout_arguments_evaluate_left_to_right_and_obey_short_circuiting() {
+        assert_eq!(
+            output(
+                r#"
+            function aumentar(inout int n) -> int { n++; return n; }
+            function mostrar(int antes, inout int actual, int despues) {
+                println(antes); println(actual); println(despues); actual++;
+            }
+            int total = 0;
+            mostrar(total, inout total, aumentar(inout total));
+            println(total);
+            println(false && aumentar(inout total) > 0);
+            println(true || aumentar(inout total) > 0);
+            println(total);
+        "#
+            ),
+            "0\n1\n1\n2\nfalse\ntrue\n2\n"
+        );
+    }
+
+    #[test]
+    fn inout_preserves_completed_changes_and_closes_scopes_on_runtime_error() {
+        let source = r#"
+            int total = 0;
+            function fallar(inout int destino) {
+                destino = 7;
+                println(destino);
+                destino += 1 / 0;
+            }
+            fallar(inout total);
+            println("no alcanzado");
+        "#;
+        let statements = Parser::new(Scanner::new(source).scan_tokens().unwrap())
+            .parse()
+            .unwrap();
+        TypeChecker::default().check(&statements).unwrap();
+        let mut bytes = Vec::new();
+        let mut interpreter = Interpreter::new(&mut bytes);
+        let error = interpreter.interpret(&statements).unwrap_err().to_string();
+        assert!(
+            error.contains("Línea 6:") && error.contains("por cero"),
+            "{error}"
+        );
+        let inspect = Parser::new(Scanner::new("println(total);").scan_tokens().unwrap())
+            .parse()
+            .unwrap();
+        interpreter.interpret(&inspect).unwrap();
+        assert_eq!(bytes, b"7\n7\n");
     }
 }

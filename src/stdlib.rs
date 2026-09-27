@@ -7,7 +7,7 @@ pub mod casting;
 
 // La biblioteca viene incluida en el intérprete. Estas marcas habilitan sus
 // nombres durante la comprobación; no descargan ni ejecutan otro archivo.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct LibraryAccess {
     imported: bool,
     short_name: bool,
@@ -43,7 +43,7 @@ impl LibraryAccess {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct StandardLibrary {
     array: LibraryAccess,
     casting: LibraryAccess,
@@ -162,7 +162,7 @@ impl ArrayFunction {
         value: Option<Value>,
         name: &Name,
     ) -> Result<Option<Value>, String> {
-        let Value::Array(elements) = array else {
+        let Value::Array { elements, .. } = array else {
             return Err(name.error(&format!("'{}' solo admite arrays.", name.text)));
         };
         match self {

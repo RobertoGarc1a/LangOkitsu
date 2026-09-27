@@ -7,7 +7,7 @@ use crate::{
 // al ejecutar, porque puede proceder de variables o de otras expresiones.
 pub fn check_type(source: &Type, target: &Type, name: &Name) -> Result<(), String> {
     use Type::*;
-    let basic = !matches!(source, Array(_)) && !matches!(target, Array(_));
+    let basic = !matches!(source, Array(_) | Union(_)) && !matches!(target, Array(_) | Union(_));
     let compatible = source == target
         || matches!(
             (source, target),
@@ -21,9 +21,7 @@ pub fn check_type(source: &Type, target: &Type, name: &Name) -> Result<(), Strin
 }
 
 pub fn evaluate(value: Value, target: &Type, name: &Name) -> Result<Value, String> {
-    let source = value
-        .value_type()
-        .ok_or_else(|| name.error("Casting no admite arrays."))?;
+    let source = value.value_type();
     check_type(&source, target, name)?;
     if source == *target {
         return Ok(value);

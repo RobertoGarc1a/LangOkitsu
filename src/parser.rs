@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use crate::{
     scanner::{Token, TokenKind},
     value::{Type, Value},
@@ -17,7 +19,25 @@ impl Name {
 
 // AST: las expresiones producen valores; las instrucciones realizan acciones.
 #[derive(Clone, Debug)]
+pub struct Parameter {
+    pub declared_type: Type,
+    pub name: Name,
+    pub is_inout: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum CallArgument {
+    Value(Expr),
+    InOut(Name),
+}
+
+#[derive(Clone, Debug)]
 pub enum Expr {
+    TypeCheck {
+        name: Name,
+        target: Type,
+        negated: bool,
+    },
     Cast {
         path: Vec<Name>,
         target: Type,
@@ -28,9 +48,15 @@ pub enum Expr {
         receiver: Option<Box<Expr>>,
         arguments: Vec<Expr>,
     },
+    Call {
+        name: Name,
+        arguments: Vec<CallArgument>,
+    },
     Literal(Value),
     Variable(Name),
     Array {
+        // El comprobador fija este tipo para conservarlo incluso en arrays vacíos.
+        element_type: RefCell<Option<Type>>,
         elements: Vec<Expr>,
         line: usize,
     },
@@ -167,9 +193,20 @@ impl BinaryOp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Stmt {
     Call(Expr),
+    Function {
+        name: Name,
+        parameters: Vec<Parameter>,
+        return_type: Option<Type>,
+        body: Vec<Stmt>,
+        line: usize,
+    },
+    Return {
+        value: Option<Expr>,
+        line: usize,
+    },
     Import {
         path: Vec<Name>,
         is_use: bool,
@@ -224,6 +261,12 @@ pub enum Stmt {
         body: Vec<Stmt>,
         line: usize,
     },
+    Break {
+        line: usize,
+    },
+    Continue {
+        line: usize,
+    },
     Print(Expr),
     Println(Expr),
 }
@@ -254,9 +297,21 @@ impl Parser {
             TokenKind::While => return self.while_statement(),
             TokenKind::For => return self.for_statement(),
             TokenKind::Foreach => return self.foreach_statement(),
+            TokenKind::Function => return self.function_declaration(),
             _ => {}
         }
         let statement = match self.peek().kind {
+            TokenKind::Break => {
+                let line = self.peek().line;
+                self.current += 1;
+                Stmt::Break { line }
+            }
+            TokenKind::Continue => {
+                let line = self.peek().line;
+                self.current += 1;
+                Stmt::Continue { line }
+            }
+            TokenKind::Return => self.return_statement()?,
             TokenKind::Import | TokenKind::Use => self.import_statement()?,
             TokenKind::Const => self.declaration()?,
             TokenKind::Type(_) if self.tokens[self.current + 1].kind != TokenKind::LeftParen => {
@@ -270,7 +325,10 @@ impl Parser {
             | TokenKind::LeftBracket => {
                 let start = self.current;
                 let expression = self.postfix()?;
-                if matches!(expression, Expr::LibraryCall { .. } | Expr::Cast { .. }) {
+                if matches!(
+                    expression,
+                    Expr::LibraryCall { .. } | Expr::Cast { .. } | Expr::Call { .. }
+                ) {
                     Stmt::Call(expression)
                 } else {
                     self.current = start;
@@ -284,7 +342,7 @@ impl Parser {
             }
             _ => {
                 return Err(self.error(
-                    "Se esperaba una declaración con tipo, una asignación, 'import', 'use', 'if', 'while', 'for', 'foreach', 'print' o 'println'.",
+                    "Se esperaba una declaración con tipo, una asignación, 'import', 'use', 'if', 'while', 'for', 'foreach', 'function', 'return', 'print' o 'println'.",
                 ));
             }
         };
@@ -313,6 +371,121 @@ impl Parser {
             path.push(self.name()?);
         }
         Ok(path)
+    }
+
+    // `function nombre(tipo param, ...) { ... }` o, con valor de retorno,
+    // `function nombre(...) -> tipo { ... }`. Sin `->` la función no devuelve
+    // un valor.
+    fn function_declaration(&mut self) -> Result<Stmt, String> {
+        let line = self.peek().line;
+        self.current += 1;
+        let name = self.name()?;
+        self.consume(
+            TokenKind::LeftParen,
+            "Se esperaba '(' después del nombre de la función.",
+        )?;
+        let mut parameters = Vec::new();
+        if self.peek().kind != TokenKind::RightParen {
+            loop {
+                let is_inout = self.peek().kind == TokenKind::InOut;
+                if is_inout {
+                    self.current += 1;
+                }
+                let declared_type = self.array_type()?;
+                parameters.push(Parameter {
+                    declared_type,
+                    name: self.name()?,
+                    is_inout,
+                });
+                if self.peek().kind != TokenKind::Comma {
+                    break;
+                }
+                self.current += 1;
+            }
+        }
+        self.consume(
+            TokenKind::RightParen,
+            "Se esperaba ')' después de los parámetros.",
+        )?;
+        let return_type = if self.peek().kind == TokenKind::Arrow {
+            self.current += 1;
+            Some(self.union_type()?)
+        } else {
+            None
+        };
+        let body = self.block()?;
+        Ok(Stmt::Function {
+            name,
+            parameters,
+            return_type,
+            body,
+            line,
+        })
+    }
+
+    // Las anotaciones separan alternativas con `||`; las expresiones conservan el OR lógico.
+    fn union_type(&mut self) -> Result<Type, String> {
+        let mut types = vec![self.array_type()?];
+        while self.peek().kind == TokenKind::OrOr {
+            self.current += 1;
+            let kind = self.array_type()?;
+            if !types.contains(&kind) {
+                types.push(kind);
+            }
+        }
+        if types.len() == 1 {
+            Ok(types.remove(0))
+        } else {
+            Ok(Type::Union(types))
+        }
+    }
+
+    fn return_statement(&mut self) -> Result<Stmt, String> {
+        let line = self.peek().line;
+        self.current += 1;
+        // `return;` termina una función sin valor; `return expresión;` devuelve.
+        let value = if self.peek().kind == TokenKind::Semicolon {
+            None
+        } else {
+            Some(self.expression()?)
+        };
+        Ok(Stmt::Return { value, line })
+    }
+
+    // Solo las funciones propias admiten permisos de escritura. Las llamadas
+    // de biblioteca conservan su lista de expresiones y sus reglas actuales.
+    fn user_arguments(&mut self) -> Result<Vec<CallArgument>, String> {
+        self.consume(
+            TokenKind::LeftParen,
+            "Se esperaba '(' para llamar a la función.",
+        )?;
+        let mut arguments = Vec::new();
+        if self.peek().kind != TokenKind::RightParen {
+            loop {
+                let argument = if self.peek().kind == TokenKind::InOut {
+                    self.current += 1;
+                    let name = self.name()?;
+                    if !matches!(self.peek().kind, TokenKind::Comma | TokenKind::RightParen) {
+                        return Err(self.error(
+                            "'inout' requiere una variable completa, sin índices ni operaciones.",
+                        ));
+                    }
+                    CallArgument::InOut(name)
+                } else {
+                    CallArgument::Value(self.expression()?)
+                };
+                arguments.push(argument);
+                if self.peek().kind != TokenKind::Comma {
+                    break;
+                }
+                self.current += 1;
+            }
+        }
+        self.consume(
+            TokenKind::RightParen,
+            "Se esperaba ')' después de los argumentos.",
+        )?;
+        Ok(arguments)
     }
 
     fn arguments(&mut self) -> Result<Vec<Expr>, String> {
@@ -396,7 +569,7 @@ impl Parser {
         if is_constant {
             self.current += 1;
         }
-        let declared_type = self.array_type()?;
+        let declared_type = self.union_type()?;
         let name = self.name()?;
         self.consume(
             TokenKind::Equal,
@@ -773,6 +946,18 @@ impl Parser {
 
     fn primary(&mut self) -> Result<Expr, String> {
         match &self.peek().kind {
+            TokenKind::TypeOf => {
+                self.current += 1;
+                let name = self.name()?;
+                let negated = match self.peek().kind {
+                    TokenKind::EqualEqual => false,
+                    TokenKind::BangEqual => true,
+                    _ => return Err(self.error("Se esperaba '==' o '!=' después de 'type variable'.")),
+                };
+                self.current += 1;
+                let target = self.array_type()?;
+                Ok(Expr::TypeCheck { name, target, negated })
+            }
             TokenKind::Type(_) => self.conversion_call(Vec::new()),
             TokenKind::LeftBracket => {
                 let line = self.peek().line;
@@ -788,7 +973,7 @@ impl Parser {
                     }
                 }
                 self.consume(TokenKind::RightBracket, "Se esperaba ']' después de los elementos del array.")?;
-                Ok(Expr::Array { elements, line })
+                Ok(Expr::Array { elements, line, element_type: RefCell::new(None) })
             }
             TokenKind::Number(_) => self.number(false, self.peek().line),
             TokenKind::LeftParen => {
@@ -811,11 +996,20 @@ impl Parser {
                     }
                     path.push(self.name()?);
                 }
-                if path.len() == 1 && self.peek().kind != TokenKind::LeftParen {
-                    Ok(Expr::Variable(path.remove(0)))
-                } else {
-                    Ok(Expr::LibraryCall { path, receiver: None, arguments: self.arguments()? })
+                if path.len() == 1 {
+                    if self.peek().kind == TokenKind::LeftParen {
+                        return Ok(Expr::Call {
+                            name: path.remove(0),
+                            arguments: self.user_arguments()?,
+                        });
+                    }
+                    return Ok(Expr::Variable(path.remove(0)));
                 }
+                Ok(Expr::LibraryCall {
+                    path,
+                    receiver: None,
+                    arguments: self.arguments()?,
+                })
             }
             _ => Err(self
                 .error("Se esperaba un literal (int, float, bool, char, string o array), una variable o una expresión entre paréntesis.")),

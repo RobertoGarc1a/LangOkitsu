@@ -12,12 +12,18 @@ pub enum TokenKind {
     While,
     For,
     Foreach,
+    Break,
+    Continue,
+    Function,
+    InOut,
+    Return,
     In,
     Import,
     Use,
     ColonColon,
     Dot,
     Type(Type),
+    TypeOf,
     Semicolon,
     LeftParen,
     RightParen,
@@ -45,6 +51,7 @@ pub enum TokenKind {
     PlusEqual,
     MinusMinus,
     MinusEqual,
+    Arrow,
     Literal(Value),
     // Conservamos los dígitos para que el parser pueda aceptar el mínimo de i64
     // junto con su signo: su magnitud positiva no cabe en un i64.
@@ -116,12 +123,20 @@ impl<'a> Scanner<'a> {
                     TokenKind::PlusEqual,
                     TokenKind::Plus,
                 ),
-                '-' => self.compound_or_single(
-                    '-',
-                    TokenKind::MinusMinus,
-                    TokenKind::MinusEqual,
-                    TokenKind::Minus,
-                ),
+                '-' => {
+                    // '->' solo aparece en el tipo de retorno de una función;
+                    // '--', '-=' y '-' conservan su significado en expresiones.
+                    if self.chars.next_if_eq(&'>').is_some() {
+                        TokenKind::Arrow
+                    } else {
+                        self.compound_or_single(
+                            '-',
+                            TokenKind::MinusMinus,
+                            TokenKind::MinusEqual,
+                            TokenKind::Minus,
+                        )
+                    }
+                }
                 '*' => TokenKind::Star,
                 '/' => TokenKind::Slash,
                 '%' => TokenKind::Percent,
@@ -259,9 +274,15 @@ impl<'a> Scanner<'a> {
             "while" => TokenKind::While,
             "for" => TokenKind::For,
             "foreach" => TokenKind::Foreach,
+            "break" => TokenKind::Break,
+            "continue" => TokenKind::Continue,
+            "function" => TokenKind::Function,
+            "inout" => TokenKind::InOut,
+            "return" => TokenKind::Return,
             "in" => TokenKind::In,
             "import" => TokenKind::Import,
             "use" => TokenKind::Use,
+            "type" => TokenKind::TypeOf,
             "int" => TokenKind::Type(Type::Int),
             "float" => TokenKind::Type(Type::Float),
             "bool" => TokenKind::Type(Type::Bool),

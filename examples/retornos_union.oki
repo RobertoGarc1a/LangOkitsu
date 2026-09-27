@@ -1,0 +1,10 @@
+function test(int numero) -> int || string {
+    if (numero > 3) {
+        return numero;
+    } else {
+        return "test";
+    }
+}
+
+println(test(5));
+println(test(2));
