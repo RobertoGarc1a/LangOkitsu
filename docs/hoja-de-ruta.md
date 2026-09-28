@@ -1,12 +1,12 @@
 # Hoja de ruta de OkitsuLang
 
-Este documento convierte ideas en encargos pequeños y revisables. **H01, H02a y H02b están implementados; los demás hitos son propuestas y este documento no autoriza por sí mismo a desarrollarlos**. Las instrucciones del repositorio exigen un encargo del usuario para cambiar el código.
+Este documento convierte ideas en encargos pequeños y revisables. **H01, H02a, H02b y H04 están implementados; los demás hitos son propuestas y este documento no autoriza por sí mismo a desarrollarlos**. Las instrucciones del repositorio exigen un encargo del usuario para cambiar el código.
 
 ## Estado de partida
 
-OkitsuLang es un intérprete de árbol en Rust. El programa se lee desde un archivo UTF-8; las etapas actuales separan scanner, parser y AST, comprobador de tipos e intérprete. La biblioteca estándar ofrece `Array` y `Casting`. El lenguaje tiene los tipos `int`, `float`, `bool`, `char`, `string` y arrays, además de declaraciones, asignaciones, `if`/`else`, `while`, `for`, `foreach`, `break`, `continue`, impresión y conversiones explícitas. Las variables requieren tipo y valor inicial. La comprobación de tipos ocurre antes de ejecutar. Hay funciones propias con parámetros tipados y valor de retorno opcional: se declaran con `function` solo en el ámbito global, usan `return`, admiten recursión directa con un límite de profundidad y exigen el tipo de retorno tras `->` cuando devuelven un valor. Los parámetros `inout` exigen la marca también en la llamada y permiten modificar variables completas del llamador. No hay estructuras, enums, entrada estándar, lectura de archivos, módulos del programa ni vistas de arrays. El `foreach` actual recorre una copia.
+OkitsuLang es un intérprete de árbol en Rust. El programa se lee desde un archivo UTF-8; las etapas actuales separan scanner, parser y AST, comprobador de tipos e intérprete. La biblioteca estándar ofrece `Array` y `Casting`. El lenguaje tiene los tipos `int`, `float`, `bool`, `char`, `string` y arrays, además de declaraciones, asignaciones, `if`/`else`, `while`, `for`, `foreach`, `break`, `continue`, impresión y conversiones explícitas. Las variables requieren tipo y valor inicial. La comprobación de tipos ocurre antes de ejecutar. Hay funciones propias con parámetros tipados y valor de retorno opcional: se declaran con `function` solo en el ámbito global, usan `return`, admiten recursión directa con un límite de profundidad y exigen el tipo de retorno tras `->` cuando devuelven un valor. Los parámetros `inout` exigen la marca también en la llamada y permiten modificar variables completas del llamador. Hay estructuras de valor con campos públicos, constantes por campo, valores por defecto, campos unión y autorrecursión finita; no hay enums, entrada estándar, lectura de archivos, módulos del programa ni vistas de arrays. El `foreach` actual recorre una copia.
 
-La sintaxis de los ejemplos de **H02 a H11** es tentativa y no está implementada. Las etapas mencionadas son las responsabilidades actuales: `scanner`, `parser` (donde se define también el AST), `type_checker`, `interpreter` y `stdlib`. Cuando una característica afecte al recorrido o las responsabilidades internas, se actualizará además `docs/funcionamiento-interno.md`.
+La sintaxis de los hitos pendientes es tentativa y no está implementada; H02 y H04 describen ya la sintaxis real. Las etapas mencionadas son las responsabilidades actuales: `scanner`, `parser` (donde se define también el AST), `type_checker`, `interpreter` y `stdlib`. Cuando una característica afecte al recorrido o las responsabilidades internas, se actualizará además `docs/funcionamiento-interno.md`.
 
 ## Cómo ejecutar esta hoja de ruta con agentes
 
@@ -20,7 +20,7 @@ Los hitos pequeños y no solapados (por ejemplo, `break` y `continue` después d
 
 ## Orden propuesto
 
-Las dependencias indican el orden aconsejado. H01, H02a y H02b están completados; los demás hitos siguen pendientes.
+Las dependencias indican el orden aconsejado. H01, H02a, H02b y H04 están completados; H03 se ha aplazado por indicación del usuario y los demás hitos siguen pendientes.
 
 ### H01 — `break` y `continue`
 
@@ -70,14 +70,14 @@ Las dependencias indican el orden aconsejado. H01, H02a y H02b están completado
 
 ### H04 — Estructuras con campos
 
-**Estado: pendiente; no implementado.** Añadir tipos de datos nombrados que agrupen valores heterogéneos.
+**Estado: implementado y ampliado el 2026-09-28.** H03 queda para más adelante por indicación del usuario; H04 no depende de él.
 
-- **Sintaxis tentativa:** `struct Persona { string nombre; int edad; }`, construcción `Persona { nombre: "Ana", edad: 30 }` y acceso `persona.edad`.
-- **Semántica por decidir:** lugar de declaración, visibilidad, orden o no de campos al construir, inicialización obligatoria de todos los campos, mutabilidad por campo, igualdad, copia frente a alias, tipos anidados y referencias recursivas. Empezar con estructuras de valor y campos obligatorios es el alcance más pequeño.
-- **Etapas:** `scanner` (posible token `struct` y acceso `.`), `parser`/AST (declaración, construcción y campo), `type_checker` (registro de tipos y validación de campos) e `interpreter`/`value` (representación y lectura/escritura de campos). `stdlib` no se requiere.
-- **Dependencias:** H02 ayuda a usar estructuras en funciones, pero no es requisito técnico; no incluir métodos en este hito.
-- **Pruebas observables:** construir e imprimir/leer campos según formato definido, tipos incompatibles, campo inexistente, campo omitido/duplicado, tipo declarado duplicado y reglas de mutación.
-- **Documentación al implementarlo:** estado con construcción y acceso; funcionamiento interno con un ejemplo que conecte AST, tipo y valor; ejemplo, historial y enlaces.
+- **Sintaxis implementada:** `struct Persona { string nombre; int edad; }`, construcción `Persona { nombre: "Ana", edad: 30 }`, acceso y escritura de campos. Se admiten `const int id;`, valores por defecto `int edad = 0;`, campos unión `int || string dato;` y pruebas `type persona.dato == int`. La declaración del tipo no lleva `;` final.
+- **Decisiones fijadas:** tipos globales declarados antes de usar, nombres únicos sin colisión con variables o funciones globales; campos públicos sin duplicados, obligatorios cuando no tengan valor por defecto. Los campos explícitos se evalúan en el orden escrito y los omitidos, después y en el orden de declaración, con acceso de solo lectura a campos anteriores y globales. Las estructuras son valores con copias profundas e igualdad nominal por contenido. `const` protege variables completas o campos, incluidos sus contenidos; reemplazar un contenedor modificable crea un valor nuevo. Se admiten estructuras vacías, tipos anteriores y autorrecursión finita mediante arrays o uniones con una alternativa que termine. Se conservan funciones, `inout` y protección de globales. Los refinamientos de campos se invalidan por reemplazos y efectos de llamadas, considerando alias. Las rutas comprueban índices y tipos antes de escribir. Las llamadas/construcciones simultáneas y el contenido anidado de valores tienen límites de 100 para detener la recursión excesiva. Por decisión del usuario, no se añaden campos privados ni métodos propios; estos últimos quedan reservados para futuras clases. No hay referencias compartidas, tipos adelantados, recursión mutua ni conversiones de Casting de estructuras.
+- **Etapas modificadas:** `scanner` (`Struct` y `Colon`, manteniendo `Dot` y `ColonColon`), `parser`/AST (declaraciones, campos con atributos e inicializadores, construcción, rutas y pruebas de tipo), `type_checker` (registro nominal, campos, constantes, contexto de inicializadores y refinamientos), `interpreter`/`value` (valores, construcción y lectura/escritura). Se excluyen estructuras en Casting; no se amplía la API de biblioteca.
+- **Dependencias:** H02 permite usarlas en funciones y las uniones existentes permiten terminar cadenas. No se implementan H03, enums de H05 ni los tipos opcionales de H06.
+- **Pruebas realizadas:** trece pruebas iniciales en `src/main.rs`, adaptadas a la ampliación, y catorce nuevas en `src/structure_tests.rs`. Cubren comportamiento, errores antes y durante la ejecución y efectos que invalidan refinamientos o destinos. Se conserva `hello.oki`.
+- **Documentación actualizada:** estado, funcionamiento interno con recorrido de AST, tipo y valor, ejemplos `estructuras.oki` y `estructuras_campos.oki`, historial, README y este archivo.
 
 ### H05 — Enums y `match`
 
@@ -211,4 +211,4 @@ Las dependencias indican el orden aconsejado. H01, H02a y H02b están completado
 
 Un hito solo se considera completado después de que un encargo explícito autorice su implementación y se cumplan los requisitos de `AGENTS.md`: revisar y conservar cambios del usuario, añadir pruebas observables para cambios de comportamiento, mantener `hello.oki`, actualizar `docs/estado-actual.md`, `docs/funcionamiento-interno.md` cuando cambie el recorrido interno, `docs/historial.md` y los enlaces/ejemplos necesarios. Para cambios Rust, ejecutar `cargo fmt -- --check`, `cargo test` y `cargo clippy --all-targets -- -D warnings`; si cambia la ejecución desde archivo, ejecutar también `cargo run -- examples/hello.oki`. Registrar sin inventar cualquier comprobación que no se haya podido ejecutar.
 
-La lista es orientativa y se puede reordenar mediante un encargo del usuario. El orden no autoriza cambios; H01, H02a y H02b figuran como completados y los demás hitos siguen pendientes.
+La lista es orientativa y se puede reordenar mediante un encargo del usuario. El orden no autoriza cambios; H01, H02a, H02b y H04 figuran como completados; H03 queda aplazado y los demás hitos siguen pendientes.

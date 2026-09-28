@@ -1,0 +1,31 @@
+struct Persona {
+    string nombre;
+    int edad;
+}
+
+struct Grupo {
+    Persona[] personas;
+}
+
+function cumplir(inout Persona persona) {
+    persona.edad++;
+}
+
+function crear(string nombre, int edad) -> Persona {
+    return Persona { edad: edad, nombre: nombre };
+}
+
+Persona ana = crear("Ana", 30);
+Persona copia = ana;
+cumplir(inout copia);
+println(ana);
+println(copia.edad);
+
+import std::Array;
+Grupo grupo = Grupo { personas: [ana] };
+grupo.personas.push(copia);
+grupo.personas[0].nombre = "Luis";
+foreach (Persona persona in grupo.personas) {
+    println(persona.nombre);
+}
+println(ana.nombre);

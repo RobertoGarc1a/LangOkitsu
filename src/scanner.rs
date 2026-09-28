@@ -15,12 +15,14 @@ pub enum TokenKind {
     Break,
     Continue,
     Function,
+    Struct,
     InOut,
     Return,
     In,
     Import,
     Use,
     ColonColon,
+    Colon,
     Dot,
     Type(Type),
     TypeOf,
@@ -92,14 +94,7 @@ impl<'a> Scanner<'a> {
                 ']' => TokenKind::RightBracket,
                 ',' => TokenKind::Comma,
                 '.' => TokenKind::Dot,
-                ':' => {
-                    if self.chars.next_if_eq(&':').is_none() {
-                        return Err(format!(
-                            "Línea {line}: se esperaba '::' en la ruta de biblioteca."
-                        ));
-                    }
-                    TokenKind::ColonColon
-                }
+                ':' => self.paired(':', TokenKind::ColonColon, TokenKind::Colon),
                 ';' => TokenKind::Semicolon,
                 '=' => self.paired('=', TokenKind::EqualEqual, TokenKind::Equal),
                 '!' => self.paired('=', TokenKind::BangEqual, TokenKind::Bang),
@@ -277,6 +272,7 @@ impl<'a> Scanner<'a> {
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
             "function" => TokenKind::Function,
+            "struct" => TokenKind::Struct,
             "inout" => TokenKind::InOut,
             "return" => TokenKind::Return,
             "in" => TokenKind::In,

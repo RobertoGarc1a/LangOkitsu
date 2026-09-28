@@ -1,9 +1,9 @@
 use std::{collections::HashMap, error::Error, io::Write, rc::Rc};
 
 use crate::{
-    parser::{BinaryOp, CallArgument, Expr, Name, Stmt, UnaryOp},
+    parser::{BinaryOp, CallArgument, Expr, FieldDef, Name, Stmt, TargetStep, UnaryOp},
     stdlib::{ArrayFunction, casting},
-    value::Value,
+    value::{Type, Value},
 };
 
 // La recursión sin fin no debe abortar el proceso: se detiene con un error
@@ -24,13 +24,23 @@ enum Binding {
     Alias { scope: usize, name: String },
 }
 
+// La ruta ya evaluada conserva posiciones de array y nombres de campo.
+// No contiene expresiones que puedan volver a ejecutar efectos.
+enum TargetPosition {
+    Index { index: usize, element_type: Type },
+    Field { name: String, structure: String },
+}
+
 // El entorno de ejecución relaciona cada nombre con su valor actual.
 // Cada bloque abre un ámbito nuevo; el último de la pila es el actual.
 pub struct Interpreter<W: Write> {
     output: W,
     scopes: Vec<HashMap<String, Binding>>,
     functions: HashMap<String, Rc<FunctionDef>>,
+    structures: HashMap<String, Rc<Vec<FieldDef>>>,
     call_bases: Vec<usize>,
+    function_depth: usize,
+    construction_depth: usize,
 }
 
 // Señal de control que atraviesa bloques: los bucles consumen 'break' y
@@ -49,7 +59,10 @@ impl<W: Write> Interpreter<W> {
             output,
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
+            structures: HashMap::new(),
             call_bases: Vec::new(),
+            function_depth: 0,
+            construction_depth: 0,
         }
     }
 
@@ -63,6 +76,10 @@ impl<W: Write> Interpreter<W> {
 
     fn execute(&mut self, statement: &Stmt) -> Result<Control, Box<dyn Error>> {
         match statement {
+            Stmt::Struct { name, fields } => {
+                self.structures
+                    .insert(name.text.clone(), Rc::new(fields.clone()));
+            }
             Stmt::Call(expression) => {
                 self.evaluate_call(expression)?;
             }
@@ -93,25 +110,21 @@ impl<W: Write> Interpreter<W> {
                     .expect("ámbito abierto")
                     .insert(name.text.clone(), Binding::Owned(value));
             }
-            Stmt::Assign {
-                name,
-                indices,
-                value,
-            } => {
-                let (scope, positions) = self.resolve_target(name, indices)?;
+            Stmt::Assign { name, steps, value } => {
+                let (scope, positions) = self.resolve_target(name, steps)?;
                 let value = self.evaluate(value)?;
                 self.write_target(scope, name, &positions, value)?;
             }
             Stmt::CompoundAssign {
                 name,
-                indices,
+                steps,
                 operator,
                 value,
                 line,
             } => {
                 // Equivale a `x = x <op> v`: se lee el destino, se evalúa el
                 // valor nuevo y se escribe solo si la operación tiene éxito.
-                let (scope, positions) = self.resolve_target(name, indices)?;
+                let (scope, positions) = self.resolve_target(name, steps)?;
                 let current = self.target_value(scope, name, &positions)?;
                 let operand = self.evaluate(value)?;
                 let result = Self::binary(current, operator.binary(), operand, *line)?;
@@ -119,11 +132,11 @@ impl<W: Write> Interpreter<W> {
             }
             Stmt::Increment {
                 name,
-                indices,
+                steps,
                 operator,
                 line,
             } => {
-                let (scope, positions) = self.resolve_target(name, indices)?;
+                let (scope, positions) = self.resolve_target(name, steps)?;
                 let current = self.target_value(scope, name, &positions)?;
                 // El paso conserva el tipo del destino: 1 para int, 1.0 para float.
                 let step = match current {
@@ -298,17 +311,40 @@ impl<W: Write> Interpreter<W> {
     fn resolve_target(
         &mut self,
         name: &Name,
-        indices: &[(Expr, usize)],
-    ) -> Result<(usize, Vec<usize>), String> {
+        steps: &[TargetStep],
+    ) -> Result<(usize, Vec<TargetPosition>), String> {
         let scope = self.scope_containing(&name.text).ok_or_else(|| {
             name.error(&format!("La variable '{}' no está declarada.", name.text))
         })?;
         let mut positions = Vec::new();
-        for (index, line) in indices {
-            let index = self.evaluate(index)?;
-            let target = self.target_value(scope, name, &positions)?;
-            let (_, position) = Self::array_position(&target, index, *line)?;
-            positions.push(position);
+        for step in steps {
+            match step {
+                TargetStep::Index(index, line) => {
+                    let index = self.evaluate(index)?;
+                    let target = self.target_value(scope, name, &positions)?;
+                    let (_, position) = Self::array_position(&target, index, *line)?;
+                    let Value::Array { element_type, .. } = target else {
+                        unreachable!("array comprobado")
+                    };
+                    positions.push(TargetPosition::Index {
+                        index: position,
+                        element_type,
+                    });
+                }
+                TargetStep::Field(field) => {
+                    let Value::Struct {
+                        name: structure, ..
+                    } = self.target_value(scope, name, &positions)?
+                    else {
+                        return Err(name.error("El destino cambió de tipo durante la evaluación."));
+                    };
+                    positions.push(TargetPosition::Field {
+                        name: field.text.clone(),
+                        structure,
+                    });
+                    self.target_value(scope, name, &positions)?;
+                }
+            }
         }
         Ok((scope, positions))
     }
@@ -318,7 +354,7 @@ impl<W: Write> Interpreter<W> {
         &self,
         scope: usize,
         name: &Name,
-        positions: &[usize],
+        positions: &[TargetPosition],
     ) -> Result<Value, String> {
         let (scope, storage_name) = self.storage_location(scope, &name.text);
         let Binding::Owned(value) = &self.scopes[scope][&storage_name] else {
@@ -326,12 +362,43 @@ impl<W: Write> Interpreter<W> {
         };
         let mut target = value;
         for position in positions {
-            let Value::Array { elements, .. } = target else {
-                unreachable!("destino validado")
-            };
-            target = elements.get(*position).ok_or_else(|| {
-                name.error("El destino quedó fuera de rango durante la evaluación.")
-            })?;
+            target = match (target, position) {
+                (
+                    Value::Array {
+                        elements,
+                        element_type,
+                    },
+                    TargetPosition::Index {
+                        index,
+                        element_type: expected,
+                    },
+                ) => {
+                    if element_type != expected {
+                        return Err(name.error("El destino cambió de tipo durante la evaluación."));
+                    }
+                    elements.get(*index)
+                }
+                (
+                    Value::Struct {
+                        name: structure,
+                        fields,
+                    },
+                    TargetPosition::Field {
+                        name: field,
+                        structure: expected,
+                    },
+                ) => {
+                    if structure != expected {
+                        return Err(name.error("El destino cambió de tipo durante la evaluación."));
+                    }
+                    fields
+                        .iter()
+                        .find(|(name, _)| name == field)
+                        .map(|(_, value)| value)
+                }
+                _ => None,
+            }
+            .ok_or_else(|| name.error("El destino quedó fuera de rango durante la evaluación."))?;
         }
         Ok(target.clone())
     }
@@ -341,9 +408,10 @@ impl<W: Write> Interpreter<W> {
         &mut self,
         scope: usize,
         name: &Name,
-        positions: &[usize],
+        positions: &[TargetPosition],
         value: Value,
     ) -> Result<(), String> {
+        value.check_depth(positions.len(), name.line)?;
         *self.target_mut(scope, name, positions)? = value;
         Ok(())
     }
@@ -353,7 +421,7 @@ impl<W: Write> Interpreter<W> {
         &mut self,
         scope: usize,
         name: &Name,
-        positions: &[usize],
+        positions: &[TargetPosition],
     ) -> Result<&mut Value, String> {
         let (scope, storage_name) = self.storage_location(scope, &name.text);
         let Binding::Owned(mut_target) = self.scopes[scope]
@@ -364,12 +432,43 @@ impl<W: Write> Interpreter<W> {
         };
         let mut target = mut_target;
         for position in positions {
-            let Value::Array { elements, .. } = target else {
-                unreachable!("destino validado")
-            };
-            target = elements.get_mut(*position).ok_or_else(|| {
-                name.error("El destino quedó fuera de rango durante la evaluación.")
-            })?;
+            target = match (target, position) {
+                (
+                    Value::Array {
+                        elements,
+                        element_type,
+                    },
+                    TargetPosition::Index {
+                        index,
+                        element_type: expected,
+                    },
+                ) => {
+                    if element_type != expected {
+                        return Err(name.error("El destino cambió de tipo durante la evaluación."));
+                    }
+                    elements.get_mut(*index)
+                }
+                (
+                    Value::Struct {
+                        name: structure,
+                        fields,
+                    },
+                    TargetPosition::Field {
+                        name: field,
+                        structure: expected,
+                    },
+                ) => {
+                    if structure != expected {
+                        return Err(name.error("El destino cambió de tipo durante la evaluación."));
+                    }
+                    fields
+                        .iter_mut()
+                        .find(|(name, _)| name == field)
+                        .map(|(_, value)| value)
+                }
+                _ => None,
+            }
+            .ok_or_else(|| name.error("El destino quedó fuera de rango durante la evaluación."))?;
         }
         Ok(target)
     }
@@ -396,14 +495,22 @@ impl<W: Write> Interpreter<W> {
         if matches!(function, ArrayFunction::Len) {
             return function.evaluate(&mut self.evaluate(array)?, None, name);
         }
-        let (target, indices) = array.clone().into_target().expect("destino comprobado");
-        let (scope, positions) = self.resolve_target(&target, &indices)?;
+        let (target, steps) = array.clone().into_target().expect("destino comprobado");
+        let (scope, positions) = self.resolve_target(&target, &steps)?;
+        let expected = self.target_value(scope, &target, &positions)?.value_type();
         let value = if matches!(function, ArrayFunction::Push) {
             Some(self.evaluate(arguments.last().expect("argumento validado"))?)
         } else {
             None
         };
-        function.evaluate(self.target_mut(scope, &target, &positions)?, value, name)
+        if let Some(value) = &value {
+            value.check_depth(positions.len() + 1, name.line)?;
+        }
+        let array = self.target_mut(scope, &target, &positions)?;
+        if array.value_type() != expected {
+            return Err(target.error("El destino cambió de tipo durante la evaluación."));
+        }
+        function.evaluate(array, value, name)
     }
 
     // Llama a una función propia. Los argumentos se evalúan de izquierda a
@@ -430,11 +537,12 @@ impl<W: Write> Interpreter<W> {
                 }
             });
         }
-        if self.call_bases.len() >= MAX_CALL_DEPTH {
+        if self.function_depth + self.construction_depth >= MAX_CALL_DEPTH {
             return Err(name.error(&format!(
                 "Se superó la profundidad máxima de llamadas ({MAX_CALL_DEPTH})."
             )));
         }
+        self.function_depth += 1;
         self.call_bases.push(self.scopes.len());
         self.scopes.push(HashMap::new());
         for (parameter, value) in function.parameters.iter().zip(values) {
@@ -450,6 +558,7 @@ impl<W: Write> Interpreter<W> {
             .map_err(|error| error.to_string());
         self.scopes.pop();
         self.call_bases.pop();
+        self.function_depth -= 1;
         match result? {
             Control::Return(value) => Ok(value),
             Control::None => Ok(None),
@@ -459,17 +568,91 @@ impl<W: Write> Interpreter<W> {
         }
     }
 
+    fn construct(&mut self, name: &Name, initializers: &[(Name, Expr)]) -> Result<Value, String> {
+        if self.function_depth + self.construction_depth >= MAX_CALL_DEPTH {
+            return Err(name.error(&format!(
+                "Se superó la profundidad máxima de construcciones y llamadas ({MAX_CALL_DEPTH})."
+            )));
+        }
+        let definition = self.structures[&name.text].clone();
+        self.construction_depth += 1;
+        let result = (|| {
+            let mut supplied = HashMap::new();
+            // Los campos explícitos pertenecen al contexto del llamador.
+            for (field, value) in initializers {
+                supplied.insert(field.text.clone(), self.evaluate(value)?);
+            }
+            // Los valores por defecto solo ven los campos anteriores y las
+            // globales; nunca heredan nombres locales de quien construye.
+            self.call_bases.push(self.scopes.len());
+            self.scopes.push(HashMap::new());
+            let result = (|| {
+                let mut fields = Vec::new();
+                for field in definition.iter() {
+                    let value = match supplied.remove(&field.name.text) {
+                        Some(value) => value,
+                        None => self.evaluate(
+                            field
+                                .default_value
+                                .as_ref()
+                                .expect("campo con valor por defecto"),
+                        )?,
+                    };
+                    self.scopes
+                        .last_mut()
+                        .expect("ámbito abierto")
+                        .insert(field.name.text.clone(), Binding::Owned(value.clone()));
+                    fields.push((field.name.text.clone(), value));
+                }
+                Ok(Value::Struct {
+                    name: name.text.clone(),
+                    fields,
+                })
+            })();
+            self.scopes.pop();
+            self.call_bases.pop();
+            result
+        })();
+        self.construction_depth -= 1;
+        result.and_then(|value| {
+            value.check_depth(0, name.line)?;
+            Ok(value)
+        })
+    }
+
     fn evaluate(&mut self, expression: &Expr) -> Result<Value, String> {
         match expression {
+            Expr::Struct { name, fields } => self.construct(name, fields),
+            Expr::Field { object, name } => {
+                let Value::Struct { fields, .. } = self.evaluate(object)? else {
+                    unreachable!("estructura comprobada")
+                };
+                Ok(fields
+                    .into_iter()
+                    .find(|(field, _)| *field == name.text)
+                    .expect("campo comprobado")
+                    .1)
+            }
             Expr::TypeCheck {
                 name,
+                fields,
                 target,
                 negated,
             } => {
                 let scope = self
                     .scope_containing(&name.text)
                     .expect("variable comprobada");
-                let value = self.target_value(scope, name, &[])?;
+                let mut value = self.target_value(scope, name, &[])?;
+                for field in fields {
+                    let Value::Struct { fields, .. } = value else {
+                        unreachable!("campo comprobado")
+                    };
+                    value = fields
+                        .into_iter()
+                        .find(|(name, _)| name == &field.text)
+                        .expect("campo comprobado")
+                        .1;
+                }
                 Ok(Value::Bool((value.value_type() == *target) != *negated))
             }
             Expr::Cast {
@@ -498,14 +681,18 @@ impl<W: Write> Interpreter<W> {
             Expr::Array {
                 elements,
                 element_type,
-                ..
-            } => Ok(Value::Array {
-                elements: elements
-                    .iter()
-                    .map(|element| self.evaluate(element))
-                    .collect::<Result<Vec<_>, _>>()?,
-                element_type: element_type.borrow().clone().expect("array comprobado"),
-            }),
+                line,
+            } => {
+                let value = Value::Array {
+                    elements: elements
+                        .iter()
+                        .map(|element| self.evaluate(element))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    element_type: element_type.borrow().clone().expect("array comprobado"),
+                };
+                value.check_depth(0, *line)?;
+                Ok(value)
+            }
             Expr::Index { array, index, line } => {
                 let array = self.evaluate(array)?;
                 let (elements, position) =

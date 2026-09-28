@@ -21,6 +21,9 @@ cargo run -- examples/conversiones.oki
 cargo run -- examples/funciones.oki
 cargo run -- examples/retornos_union.oki
 cargo run -- examples/variables_union.oki
+cargo run -- examples/estructuras.oki
+cargo run -- examples/estructuras_campos.oki
+cargo run -- examples/lista_enlazada.oki
 ```
 
 Cargo compila el intérprete y lo ejecuta. El separador `--` hace que la ruta llegue al programa como argumento. Se usa el primer argumento; los adicionales se ignoran. `.oki` es la extensión del proyecto, pero no se comprueba la extensión.
@@ -140,12 +143,12 @@ println(edad);
 Produce `25` y `26`, cada uno en su línea. La copia guarda el valor de ese momento; las reasignaciones posteriores no la modifican.
 
 - La declaración tiene la forma `tipo nombre = expresión;`, con `const` opcional antes del tipo para impedir reasignaciones. El tipo y el valor inicial son obligatorios; no se crean valores por defecto.
-- La reasignación tiene la forma `nombre = expresión;`, o `nombre[índice] = expresión;` para un elemento de array. Solo se permite para variables ya declaradas sin `const` y conserva su tipo. No es una declaración nueva.
+- La reasignación tiene la forma `nombre = expresión;`, `nombre[índice] = expresión;` para un elemento de array o `nombre.campo = expresión;` para un campo de estructura. Solo se permite para variables ya declaradas sin `const` y conserva su tipo. No es una declaración nueva.
 - El valor debe pertenecer al tipo declarado tanto al declarar como al reasignar; una unión permite cualquiera de sus alternativas. No se convierte automáticamente entre `int` y `float`, entre `char` y `string`, ni entre ningún otro par de tipos.
 - Las variables deben declararse antes de usarlas. No se permite `int x = x;`, ni declarar dos veces el mismo nombre.
 - Existe un ámbito global por archivo y, dentro de él, cada bloque `{ ... }` de un `if` abre un ámbito propio. La búsqueda de un nombre empieza en el bloque actual y continúa hacia fuera. Cada ejecución empieza vacía.
 - Los nombres empiezan por letra ASCII o `_`, y continúan con letras ASCII, dígitos o `_`. Distinguen mayúsculas de minúsculas.
-- `int`, `float`, `bool`, `char`, `string`, `const`, `if`, `else`, `while`, `for`, `foreach`, `break`, `continue`, `function`, `return`, `inout`, `in`, `import`, `use`, `true`, `false`, `print` y `println` son palabras reservadas. Nombres como `int2`, `println2`, `func` o `funcion` sí se permiten.
+- `int`, `float`, `bool`, `char`, `string`, `const`, `if`, `else`, `while`, `for`, `foreach`, `break`, `continue`, `function`, `struct`, `type`, `return`, `inout`, `in`, `import`, `use`, `true`, `false`, `print` y `println` son palabras reservadas. Nombres como `int2`, `println2`, `func` o `funcion` sí se permiten.
 
 Estos fragmentos son **inválidos**:
 
@@ -190,8 +193,8 @@ println(es_entero);
 
 Imprime `6`, `test!` y `false`. El ejemplo [variables_union.oki](../examples/variables_union.oki) muestra además cómo guardar un retorno unión de una función.
 
-- Se admiten tipos básicos y arrays, incluidos `const int || string fijo = 1;` e `int[] || string datos = [];`. No hay conversiones implícitas. El inicializador y cada asignación deben tener todos sus tipos posibles incluidos en la declaración. Se pueden copiar uniones iguales o más pequeñas, aunque se escriban en distinto orden; las copias son independientes.
-- `type nombre == tipo` y `type nombre != tipo` producen `bool`. Se comprueba el tipo **actual del valor**, no la lista de alternativas declarada. `type` es una palabra reservada nueva. Recibe un nombre de variable, no una llamada, un literal ni un acceso `datos[0]`; a la derecha se escribe un tipo concreto, básico o array, sin comillas. También se pueden comprobar variables de un solo tipo.
+- Se admiten tipos básicos, arrays y estructuras, incluidos `const int || string fijo = 1;` e `int[] || string datos = [];`. No hay conversiones implícitas. El inicializador y cada asignación deben tener todos sus tipos posibles incluidos en la declaración. Se pueden copiar uniones iguales o más pequeñas, aunque se escriban en distinto orden; las copias son independientes.
+- `type nombre == tipo` y `type nombre != tipo` producen `bool`. Se comprueba el tipo **actual del valor**, no la lista de alternativas declarada. `type` es una palabra reservada nueva. Recibe un nombre de variable o una ruta de campos como `dato.valor`, no una llamada, un literal ni una ruta con índices como `datos[0]`; a la derecha se escribe un tipo concreto, básico, array o estructura, sin comillas. También se pueden comprobar variables de un solo tipo.
 - En `if (type resultado == int)`, la rama verdadera conoce `resultado` como `int`. En el `else`, se excluye `int`: para `int || string`, queda `string`; para `int || string || bool`, quedan `string || bool` y hace falta otra comprobación. Esto se llama **refinamiento**: reducir temporalmente los tipos posibles a partir de una condición.
 - Funcionan `else if`, la negación `!`, `&&` y `||`. El lado derecho de `&&` utiliza lo sabido cuando la izquierda es verdadera, y el de `||`, cuando es falsa. Por ejemplo, `type resultado == int && resultado > 3` es válido. Al reunir caminos distintos se incluyen los tipos posibles de cualquiera de ellos; el análisis no intenta demostrar todas las equivalencias lógicas. Se comprueban también las ramas imposibles, sin saltarse errores.
 - La prueba puede usarse en `println`, en una variable `bool`, en un retorno o en condiciones de `while` y `for`. El cuerpo de esos bucles recibe lo conocido cuando la condición es verdadera. Guardar la prueba en un `bool` no conserva la relación con la variable original: `if (es_entero)` no refina `resultado`.
@@ -218,7 +221,7 @@ println(copia);
 
 Produce `10` y `11`, cada uno en su línea. El inicializador se evalúa una sola vez al ejecutar la declaración y puede usar expresiones y nombres anteriores. Cambiar `base` o una copia no cambia `limite`: no es una fórmula que se vuelva a calcular.
 
-- Se admite `const` con `int`, `float`, `bool`, `char`, `string`, arrays de estos tipos (también anidados) y uniones de estos tipos. En un array constante tampoco se permite cambiar ningún elemento o subarray. El tipo y el inicializador son obligatorios; todos los tipos posibles del inicializador deben estar permitidos por la anotación.
+- Se admite `const` con `int`, `float`, `bool`, `char`, `string`, estructuras, arrays de estos tipos (también anidados) y uniones de estos tipos. En un array constante tampoco se permite cambiar ningún elemento o subarray. El tipo y el inicializador son obligatorios; todos los tipos posibles del inicializador deben estar permitidos por la anotación.
 - Se pueden leer constantes en operaciones, impresiones e inicializadores de otras variables o constantes.
 - Cualquier reasignación está prohibida, incluso con el mismo valor: `limite = 10;` y `limite = limite;` son errores. No se puede convertir una variable ya declarada en constante ni volver a declarar el mismo nombre.
 - El error señala la línea del nombre asignado y se detecta antes de ejecutar cualquier instrucción del archivo. Las declaraciones sin `const` conservan su comportamiento anterior.
@@ -246,6 +249,154 @@ true
 Hola mundo
 ```
 
+## Estructuras con campos
+
+Una **estructura** es un tipo nombrado que agrupa valores de tipos distintos. Cada campo tiene nombre y un tipo declarado, que puede ser concreto o unión:
+
+```oki
+struct Persona {
+    string nombre;
+    int edad;
+}
+Persona ana = Persona { edad: 30, nombre: "Ana" };
+Persona copia = ana;
+copia.edad++;
+println(ana);
+println(copia.edad);
+```
+
+Produce `Persona { nombre: "Ana", edad: 30 }` y `31`. La construcción usa `:` entre cada nombre y su valor, y comas entre campos. La declaración del tipo termina en `}` sin `;`; las declaraciones de campos y variables sí exigen `;`.
+
+- Los tipos se declaran solo en el ámbito global y antes de cualquier uso, también antes de usarlos en una firma de función o en otra estructura. No pueden repetirse ni coincidir con una variable o función global. Los nombres locales pueden ocultar variables globales; la anotación de tipo y la construcción siguen identificando el tipo por su nombre.
+- Los campos admiten los cinco tipos básicos, arrays, estructuras anteriores, el propio tipo y uniones con `||`. También admiten `const` y un inicializador opcional `= expresión`. Todos son públicos; no hay modificadores de visibilidad ni métodos propios. Se permiten estructuras vacías: `struct Marca {}` y `Marca {}`. Las reglas de cada ampliación se explican a continuación.
+- La construcción exige los campos sin valor por defecto. Un campo con valor por defecto puede omitirse o indicarse explícitamente para sustituir ese valor. No se admiten campos adicionales ni repetidos, ni conversiones implícitas: cada valor debe pertenecer al tipo declarado. Los campos explícitos se pueden escribir en cualquier orden y se evalúan una sola vez, de izquierda a derecha en el orden escrito. No se permite una coma final.
+- `persona.edad` lee un campo y puede encadenarse con campos e índices: `grupo.personas[0].edad`. También se leen campos de construcciones o valores devueltos por funciones. Para escribir debe existir una variable raíz modificable: `persona.edad = 31;`, `persona.edad++;` o `persona.edad += 2;`, con las reglas del tipo del campo. No se asignan campos de valores temporales.
+- Las copias, asignaciones, parámetros normales y retornos son independientes, incluidos todos los campos y arrays interiores. `const Persona ana = ...;` impide reemplazarla, cambiar sus campos o modificar sus arrays con índices, `push` o `pop`. Una copia sin `const` sí puede cambiar.
+- Cada nombre define un tipo distinto: dos estructuras con campos iguales no son intercambiables. Esta regla se llama **identidad nominal**. `==` y `!=` comparan todos los campos por valor entre estructuras del mismo tipo, incluidos arrays y estructuras interiores. El orden usado en la construcción no afecta a la igualdad. No hay operaciones aritméticas ni de orden sobre estructuras completas, ni conversiones de Casting desde o hacia ellas.
+- Las estructuras pueden ser elementos de arrays (`Persona[]`), parámetros, retornos y alternativas de variables o retornos unión (`Persona || string`). Para acceder al campo de una variable unión hay que comprobar antes `type dato == Persona`. Los campos también pueden tener una unión, que se comprueba con `type dato.campo == tipo`.
+- Las funciones reciben copias salvo con parámetros `inout Persona persona`. Para modificar una global deben recibirla como `inout`; la protección también cubre campos y arrays interiores. `inout` admite la variable completa, no campos como `inout persona.edad`. No se añaden métodos propios.
+- Los arrays guardados en campos usan `std::Array` con las reglas existentes: `grupo.personas.push(ana);`, `std::Array::len(grupo.personas)` o, con `use`, `Array::pop(grupo.personas)`. El `foreach` conserva las copias de entrada y de cada elemento.
+- Se imprime el nombre seguido de los campos en el orden de declaración: `Persona { nombre: "Ana", edad: 30 }`. Las cadenas y caracteres interiores llevan comillas; se conserva su contenido sin escapes, igual que en arrays. Es un formato para leer, no una garantía de código reutilizable.
+- Los errores de tipos, campos ausentes, desconocidos o repetidos impiden ejecutar todo el archivo. Se indica la línea del nombre de campo, o la del nombre de construcción si falta alguno. Los índices fuera de rango y errores al evaluar un campo ocurren en ejecución, conservando la salida y los efectos ya completados. Si otra llamada elimina una posición del destino o cambia el tipo de una estructura o array de la ruta antes de escribir, se vuelve a comprobar y se informa del destino fuera de rango o cambiado de tipo.
+
+El ejemplo [estructuras.oki](../examples/estructuras.oki) combina construcción, copia, retorno, `inout`, arrays interiores y `foreach`. Produce:
+
+```text
+Persona { nombre: "Ana", edad: 30 }
+31
+Luis
+Ana
+Ana
+```
+
+### Campos constantes y valores por defecto
+
+```oki
+struct Registro {
+    const int id;
+    int doble = id * 2;
+    int || string valor = 0;
+    int[] notas = [];
+}
+Registro dato = Registro { id: 3 };
+println(dato.doble);
+if (type dato.valor == int) {
+    dato.valor++;
+    println(dato.valor);
+}
+```
+
+Produce `6` y `1`. Solo `id` es obligatorio en esta construcción. Cada instancia recibe su propio array `notas`.
+
+- `const` delante del tipo protege el campo completo: no se sustituye ni se modifican sus campos, elementos o subarrays, tampoco mediante `push` o `pop`. Se aplica aunque la estructura raíz sea modificable y aunque se reciba mediante `inout`. El error señala el campo constante y ocurre antes de ejecutar.
+- Un campo `const` admite un valor por defecto o uno explícito al construir. Su anotación se conserva en todas las copias de esa estructura. Leer su array y guardarlo en una variable nueva sí permite modificar esa copia independiente.
+- Se puede reemplazar una estructura modificable completa, por ejemplo `dato = Registro { id: 4 };`. Esto construye un valor nuevo con otro `id`; también se puede reemplazar un campo contenedor modificable. `const` por campo impide escribir a través de ese campo, no crear otros valores de su tipo. Una variable raíz `const` sigue impidiendo también esos reemplazos.
+- Primero se evalúan todos los campos explícitos en el orden escrito. Después se recorren los campos en el orden de declaración: se usa el valor explícito si existe y, si falta, se calcula su valor por defecto. Un valor por defecto sustituido explícitamente no se evalúa.
+- Cada valor por defecto se calcula de nuevo para cada construcción; no se evalúa al declarar el tipo. Puede leer campos anteriores, incluso si eran obligatorios y se proporcionaron explícitamente. No ve campos posteriores ni a sí mismo. Los nombres de campos ocultan globales del mismo nombre.
+- Los valores por defecto pueden leer globales y llamar a funciones o bibliotecas declaradas o habilitadas antes del tipo. Las globales se leen con su valor actual al construir. Los nombres locales del llamador no cambian su significado, aunque tengan el mismo nombre. Campos anteriores y globales son de solo lectura dentro de esos inicializadores: no se admiten `inout`, `push` o `pop` sobre ellos. Una función por valor sí puede imprimir o modificar sus copias locales.
+- Todos los inicializadores se comprueban al declarar el tipo, aunque después se sustituyan explícitamente o no se construya ninguna instancia. Deben tener un tipo compatible, sin conversiones implícitas. Los arrays vacíos reciben contexto del tipo del campo; una unión de varios tipos array puede exigir una variable concreta si el vacío es ambiguo.
+- Si un valor por defecto falla durante una construcción, se conservan los efectos y la salida anteriores, se cierran sus ámbitos y no se guarda una instancia incompleta.
+
+### Campos unión
+
+Un campo `int || string valor` admite un entero o texto. Para operar sobre él hay que distinguir su alternativa actual:
+
+```oki
+struct Dato { int || string valor = 0; }
+Dato dato = Dato {};
+dato.valor = "listo";
+if (type dato.valor == int) {
+    println(dato.valor + 1);
+} else {
+    println(dato.valor + "!");
+}
+```
+
+Produce `listo!`. También se admite `!=`, negación, cortocircuito, condiciones de bucles y rutas anidadas como `type dato.interior.valor == int`.
+
+- Una asignación completa al campo se comprueba contra su unión declarada y descarta el tipo refinado de ese campo y sus descendientes. Reemplazar la estructura contenedora descarta las conclusiones sobre sus campos. Una modificación que conserva el tipo, como `++` o `push`, mantiene el refinamiento salvo otros efectos de sus expresiones.
+- Una llamada con `inout dato` puede cambiar cualquiera de sus campos y descarta los refinamientos correspondientes, también entre operandos, argumentos o inicializadores. Cuando se escribe o reenvía un parámetro `inout`, se descartan además conclusiones sobre otros parámetros `inout` y globales porque pueden señalar la misma variable. El análisis es conservador y puede exigir otra prueba aunque la función concreta no cambie ese campo.
+- Las ramas reúnen sus tipos posibles. Los bucles olvidan conclusiones sobre campos que se reasignan o estructuras que reciben llamadas con `inout`, antes de comprobar otra vuelta. Las pruebas guardadas en un `bool` y los saltos de control no deducen refinamientos.
+- Las pruebas solo admiten un nombre y campos, sin índices ni llamadas. Para inspeccionar un elemento de array se puede copiar a una variable de estructura y comprobar sus campos allí. Los parámetros y elementos de arrays siguen exigiendo un tipo concreto; un campo refinado sí puede pasarse por valor a una función de ese tipo. `inout` mantiene la restricción de variables completas.
+
+### Estructuras recursivas
+
+Una estructura puede contener su propio tipo cuando existe una forma de terminar el valor. Para árboles, un array vacío actúa como terminación:
+
+```oki
+struct Nodo { int valor; Nodo[] hijos = []; }
+Nodo raiz = Nodo { valor: 1, hijos: [Nodo { valor: 2 }] };
+println(raiz.hijos[0].valor);
+```
+
+Produce `2`. Los hijos son valores independientes. También se puede representar una cadena con `Enlace || bool siguiente = false`: cada eslabón contiene otro `Enlace` o un booleano de terminación. El uso de `false` es una convención del programa; el tipo también permite `true`.
+
+- El propio nombre del tipo se admite dentro de sus campos; otras estructuras siguen teniendo que declararse antes. No hay declaraciones adelantadas ni recursión mutua entre tipos.
+- `struct Nodo { Nodo siguiente; }` se rechaza porque exige otra instancia sin una alternativa que termine. Un campo array permite terminar con `[]`; una unión permite terminar con una alternativa que no sea el propio tipo. No hay valores nulos ni tipos opcionales nuevos.
+- Se conservan las copias profundas, la igualdad por contenido, los campos constantes y las reglas de `inout`. No se introducen punteros, referencias compartidas ni ciclos entre instancias: son árboles de valores, aunque el tipo sea recursivo.
+- El contenido de un valor tiene un máximo de 100 niveles combinados de estructuras y arrays. Se comprueba al construir y antes de escribir o añadir elementos; también limita los valores que crecen en un bucle. Superarlo produce un error de ejecución, conservando los efectos ya completados.
+- Las llamadas a funciones y construcciones simultáneas comparten un límite de profundidad de 100. Un valor por defecto como `Nodo[] hijos = [Nodo {}]` se comprueba por tipos, pero si se usa sin terminación falla en ejecución al alcanzar ese límite. Proporcionar `hijos: []` evita evaluar ese valor por defecto.
+
+El ejemplo [estructuras_campos.oki](../examples/estructuras_campos.oki) reúne estas ampliaciones y produce:
+
+```text
+6
+5
+listo!
+Nodo { valor: 1, hijos: [Nodo { valor: 2, hijos: [] }] }
+Nodo { valor: 1, hijos: [Nodo { valor: 9, hijos: [] }] }
+20
+```
+
+### Ejemplo de lista enlazada
+
+Una **lista enlazada** organiza sus elementos como nodos: cada uno guarda un valor y el siguiente nodo. El ejemplo [lista_enlazada.oki](../examples/lista_enlazada.oki) usa `Nodo || bool siguiente = false` para terminar la cadena y una estructura `Lista` cuyo campo `primero` también admite `false`, para representar una lista vacía. En este ejemplo solo se usa `false` como terminación, aunque el tipo permite ambos booleanos.
+
+`insertar_al_inicio(inout Lista lista, int valor)` construye un nodo cuyo `siguiente` es la cabeza anterior y lo guarda en `lista.primero`. Al insertar `30`, `20` y `10`, en ese orden, queda `10 -> 20 -> 30 -> fin`. `imprimir_lista`, `longitud` y `contiene` recorren la cadena con un `while`: antes de acceder a `valor` o `siguiente`, comprueban `type actual == Nodo`. `quitar_primero` sustituye la cabeza por su siguiente nodo y devuelve `false` si la lista estaba vacía.
+
+Son nodos guardados por valor: copiar la lista copia toda su cadena y avanzar el recorrido obtiene una copia de la parte restante. Se aplica el límite de profundidad de valores ya descrito. El ejemplo enseña la organización y las operaciones de una lista; las inserciones y recorridos conservan el coste de las copias profundas del intérprete actual.
+
+Se ejecuta con `cargo run -- examples/lista_enlazada.oki` y produce:
+
+```text
+Lista vacía:
+fin
+false
+Lista con tres nodos:
+10 -> 20 -> 30 -> fin
+Longitud:
+3
+Contiene 20:
+true
+Contiene 99:
+false
+Quitar el primer nodo de la copia:
+true
+20 -> 30 -> fin
+La original conserva sus nodos:
+10 -> 20 -> 30 -> fin
+```
+
 ## Arrays
 
 Un **array** es una secuencia ordenada de elementos del mismo tipo. Se añade `[]` al tipo del elemento y se escriben los valores entre corchetes, separados por comas:
@@ -263,10 +414,10 @@ println(copia);
 
 Produce `[1, 5, 7]`, `10`, `[10, 5, 7]` y `[10, 99, 7]`, cada uno en su línea.
 
-- El tipo de la variable sigue siendo obligatorio: `int[]`, `float[]`, `bool[]`, `char[]` o `string[]`. Todos los elementos deben coincidir exactamente con su tipo, sin conversiones implícitas. `float[] precios = [1];` es inválido; se escribe `[1.0]`.
+- El tipo de la variable sigue siendo obligatorio: `int[]`, `float[]`, `bool[]`, `char[]`, `string[]` o un array de estructuras como `Persona[]`. Todos los elementos deben coincidir exactamente con su tipo, sin conversiones implícitas. `float[] precios = [1];` es inválido; se escribe `[1.0]`.
 - Los elementos pueden ser expresiones y se evalúan de izquierda a derecha. Sin un tipo esperado, como en `println([1, 2]);`, el primer elemento determina el tipo del literal y se comprueban los demás. Esto no permite omitir el tipo de una declaración.
 - Un array vacío se escribe `[]` y necesita el contexto de una declaración o asignación: `int[] vacio = [];`, `vacio = [];`. También puede recibir el contexto de un literal exterior cuyo tipo ya se conoce. `println([]);`, `println([[], [1]]);` y comparar una variable directamente con `[]` se rechazan porque ahí no se proporciona el tipo esperado. Se puede declarar el vacío e imprimirlo o comparar dos variables vacías del mismo tipo.
-- Se accede con `array[índice]`. El índice debe ser `int` y estar entre `0` y la longitud menos uno. Se admiten expresiones como `numeros[1 + 1]`, lecturas de literales como `[10, 20][0]` y asignaciones `numeros[0] = 10;`. Solo un nombre declarado seguido de índices puede ser destino de asignación.
+- Se accede con `array[índice]`. El índice debe ser `int` y estar entre `0` y la longitud menos uno. Se admiten expresiones como `numeros[1 + 1]`, lecturas de literales como `[10, 20][0]` y asignaciones `numeros[0] = 10;`. Un nombre declarado seguido de campos o índices puede ser destino de asignación.
 - Un índice negativo o mayor o igual que la longitud produce un error durante la ejecución. No se aceptan índices negativos para contar desde el final. La comprobación de límites también se aplica al escribir: no añade elementos ni amplía el array. El error señala la línea del corchete `[` del acceso, conserva la salida previa y detiene las instrucciones posteriores.
 - La longitud no forma parte del tipo. Se puede reemplazar todo el array por otro del mismo tipo y distinta longitud: `numeros = [4, 5];`. La biblioteca `std::Array` permite consultar la longitud con `len`, añadir al final con `push` y eliminar el último elemento con `pop`. No se pueden insertar o eliminar posiciones arbitrarias ni extraer intervalos.
 - Las copias son independientes, incluidos todos los arrays interiores. `const` impide tanto sustituir el array como escribir sus elementos, a cualquier profundidad. Una copia declarada sin `const` sí puede cambiar.
@@ -331,7 +482,7 @@ Produce `3`, `3` y `3`, cada uno en su línea. Un **método** se llama sobre un 
 - Admite arrays de cualquiera de los tipos actuales, incluidos vacíos declarados, constantes y arrays anidados. Cuenta los elementos del nivel consultado: para `int[][] tabla = [[], [1, 2, 3]];`, `tabla.len()` es `2` y `tabla[1].len()` es `3`.
 - La consulta no modifica el array. Refleja su valor en ese momento y se puede usar en condiciones, índices y operaciones: `for (int i = 0; i < numeros.len(); i++) { println(numeros[i]); }`.
 - Se admiten receptores que sean expresiones de array, como `[10, 20].len()`, `(numeros).len()` o `tabla[0].len()`. Los vacíos conservan la regla de tipo: `int[] vacio = []; println(vacio.len());` funciona después del `import`, pero `[].len()` y `std::Array::len([])` se rechazan por falta de tipo de elemento.
-- Están implementados `len`, `push` y `pop`. Una llamada puede ser una instrucción completa con `;`, descartando su resultado si lo tiene. `len` y `pop` también se usan como expresiones; `push` no devuelve un valor. No hay otros métodos de cadenas aparte de Casting, ni importaciones de archivos, alias personalizados o comodines. Las funciones definidas por el usuario existen con las reglas descritas arriba y sin valor de retorno.
+- Están implementados `len`, `push` y `pop`. Una llamada puede ser una instrucción completa con `;`, descartando su resultado si lo tiene. `len` y `pop` también se usan como expresiones; `push` no devuelve un valor. No hay otros métodos de cadenas aparte de Casting, ni importaciones de archivos, alias personalizados o comodines. Las funciones definidas por el usuario admiten el retorno opcional descrito en su sección.
 
 Este programa es **inválido** y no imprime nada:
 
@@ -376,7 +527,7 @@ Imprime `5`, `4` y `[1, 2, 3]` en líneas separadas.
 | Eliminar el último | `numeros.pop()` | `std::Array::pop(numeros)` | El elemento eliminado. |
 
 - Las dos formas requieren un `import std::Array;` anterior. Con `use std::Array;` se admite también `Array::push` y `Array::pop`. Igual que con `len`, no se habilitan funciones sueltas `push(numeros, 4)` ni `pop(numeros)`.
-- El destino debe ser una variable array sin `const` o uno de sus subarrays: `tabla[0].push(4);`, `std::Array::pop(tabla[0]);`. Se permiten paréntesis alrededor del destino. No se puede modificar un literal, un array devuelto por otra llamada ni una constante, a ninguna profundidad.
+- El destino debe ser un array dentro de una variable sin `const`, también un campo o subarray: `tabla[0].push(4);`, `std::Array::pop(tabla[0]);`. Se permiten paréntesis alrededor del destino. No se puede modificar un literal, un array devuelto por otra llamada ni una constante, a ninguna profundidad.
 - `push` exige exactamente el tipo del elemento, sin conversiones implícitas. Para `int[][] tabla = [];`, `tabla.push([]);` es válido: el tipo del destino proporciona el contexto del nuevo subarray vacío. Las copias siguen siendo independientes, incluidos los arrays insertados o extraídos.
 - `push` se usa como instrucción con `;`. `println(numeros.push(4));` es un error antes de ejecutar. `pop` puede aparecer en un inicializador, una impresión, una operación o como instrucción que descarta el valor: `numeros.pop();`.
 - `pop` sobre un vacío produce un error de ejecución en la línea del nombre `pop`, conserva la salida previa y detiene el programa. No devuelve `null` ni un valor por defecto.
@@ -393,7 +544,7 @@ El ejemplo [modificar_arrays.oki](../examples/modificar_arrays.oki) imprime `[1,
 | `float` | `+`, `-`, `*`, `/`, `%`; signos unarios `+` y `-`. | `float` |
 | `bool` | Negación `!`, conjunción `&&` («y»), disyunción `\|\|` («o»). | `bool` |
 | `string` | Concatenación `+`. | `string` |
-| Cualquiera de los tipos básicos o arrays | Igualdad `==` y desigualdad `!=` entre valores del mismo tipo. | `bool` |
+| Cualquiera de los tipos básicos, arrays o estructuras | Igualdad `==` y desigualdad `!=` entre valores del mismo tipo. | `bool` |
 | `int`, `float`, `char`, `string` | `<`, `<=`, `>`, `>=` entre valores del mismo tipo. | `bool` |
 
 Un operador **unario** recibe un valor, como `-edad`; uno **binario** recibe dos, como `edad + 1`. No hay conversiones implícitas en los operadores: `1 + 2.0`, `1 == 1.0`, `"Hola" + '!'` y `'a' + 'b'` son errores de tipos. `char` admite comparaciones, pero no aritmética ni concatenación. `bool` no admite comparaciones de orden.
@@ -466,7 +617,7 @@ Produce `2`, `12.5`, `Hola, mundo` y `[2, 12, 2]`, cada uno en su línea.
 
 - `nombre += expresión;` equivale a `nombre = nombre + expresión;`, y `nombre -= expresión;` a `nombre = nombre - expresión;`. Siguen las mismas reglas de tipo que `+` y `-`: `+=` admite `int`, `float` y `string` (concatenación); `-=` admite `int` y `float`. `mensaje += 'x';` es un error, igual que `"a" + 'x'`.
 - `nombre++;` suma una unidad y `nombre--;` la resta. Solo se admiten sobre `int` o `float`, y la unidad conserva el tipo: en un `int` se suma `1` y en un `float`, `1.0`.
-- El destino puede ser una variable o un elemento de array, con los mismos índices que una asignación: `numeros[i + 1] += 2`, `tabla[0][1]--`. El índice debe ser `int` y estar dentro de los límites al ejecutar.
+- El destino puede ser una variable, un campo de estructura o un elemento de array, con los mismos índices que una asignación: `numeros[i + 1] += 2`, `tabla[0][1]--`. El índice debe ser `int` y estar dentro de los límites al ejecutar.
 - El nombre debe estar declarado y no puede ser constante. Cualquier forma abreviada sobre una constante se rechaza antes de ejecutar, igual que `limite = 0;`, incluso con el mismo valor o sobre un elemento: `a[0]++` con `const int[] a = [1];` falla.
 - No hay prefijo `++x`/`--x`, ni `*=`, `/=`, `%=` ni encadenamientos como `a += b -= 1;`. La actualización de un `for` admite estas formas: `for (int i = 0; i < 3; i++) { ... }`.
 - El desbordamiento de `int` y los resultados float no finitos se detectan al ejecutar y señalan la línea del operador, conservando la salida previa.
@@ -627,8 +778,8 @@ println(mayor(10, 7));
 Imprime `Hola, Ana`, `5` y `10`. La declaración termina en `}` y no lleva `;`; cada instrucción de dentro sí lo lleva.
 
 - `function`, `return` e `inout` son palabras reservadas. La declaración solo se admite en el ámbito global del archivo, fuera de cualquier bloque, como `import` y `use`. Debe aparecer antes de las llamadas que la usan.
-- Cada parámetro tiene la forma `tipo nombre` o `inout tipo nombre`; el tipo es obligatorio y puede ser básico o array. No hay valores por defecto ni parámetros sin tipo, y dos parámetros no pueden repetir nombre.
-- El tipo de retorno se escribe tras `->` y admite tipos básicos, arrays o una unión de estos separados por `||`. No existe `void`: sin `->` la función no devuelve valor.
+- Cada parámetro tiene la forma `tipo nombre` o `inout tipo nombre`; el tipo es obligatorio y puede ser básico, array o estructura. No hay valores por defecto ni parámetros sin tipo, y dos parámetros no pueden repetir nombre.
+- El tipo de retorno se escribe tras `->` y admite tipos básicos, arrays, estructuras o una unión de estos separados por `||`. No existe `void`: sin `->` la función no devuelve valor.
 - `return expresión;` termina la función y devuelve ese valor, que debe pertenecer a los tipos permitidos tras `->`, sin conversiones implícitas. `return;` sin expresión solo se permite en funciones sin tipo de retorno. `return` solo puede aparecer dentro de una función.
 - Una función con `-> tipo` debe devolver un valor en todos los caminos de ejecución. La comprobación es conservadora: vale un `return` directo o un `if`/`else` donde las dos ramas devuelvan; un bucle no garantiza el retorno, aunque sea infinito, porque puede no ejecutarse ninguna vuelta.
 - Una función con valor se usa como expresión donde su tipo sea compatible: en una declaración, dentro de `println`, como argumento o dentro de una operación. Los retornos de tipo unión tienen las restricciones indicadas más abajo. Una función sin valor solo se admite como instrucción `nombre(argumentos);`; usarla como expresión es un error antes de ejecutar.
@@ -702,7 +853,7 @@ println(test(2));
 
 Imprime `5` y `test`, cada uno en su línea. El programa está en [retornos_union.oki](../examples/retornos_union.oki).
 
-- La unión se admite después de `->` y en declaraciones de variables y constantes. Sus alternativas pueden ser tipos básicos o arrays, por ejemplo `int || string || bool` o `int[] || string`. El orden no afecta a los retornos permitidos y las repeticiones se eliminan: `int || int` equivale a `int`.
+- La unión se admite después de `->` y en declaraciones de variables y constantes. Sus alternativas pueden ser tipos básicos, arrays o estructuras, por ejemplo `int || string || bool` o `int[] || string`. El orden no afecta a los retornos permitidos y las repeticiones se eliminan: `int || int` equivale a `int`.
 - Cada `return` debe devolver un tipo permitido. `return true;` en una función `-> int || string` se rechaza antes de ejecutar. Se sigue exigiendo un valor en todos los caminos; `return;` no sirve para una unión.
 - Se puede devolver el resultado de otra función si **todos** sus tipos posibles están permitidos: una llamada de tipo `int || string` puede devolverse desde una función `-> string || int || bool`, pero no desde una `-> int`.
 - La llamada conserva el tipo de retorno declarado aunque un argumento concreto permita prever la rama elegida. Por ello `int resultado = test(5);` es inválido: el comprobador ve `int || string`. También se rechaza pasar ese resultado a un parámetro `int`.
@@ -727,8 +878,8 @@ println(total);
 
 Imprime `8`. `destino` es otro nombre para el almacenamiento de `total`: cada escritura cambia el original inmediatamente, sin esperar al final de la función.
 
-- Se admiten los cinco tipos básicos y arrays completos, incluidos vacíos y anidados. El tipo debe coincidir exactamente.
-- El argumento debe tener la forma `inout nombre`, con una variable modificable ya declarada. Se rechazan constantes, literales, resultados de llamadas, operaciones, nombres entre paréntesis y elementos o subarrays como `inout datos[0]`.
+- Se admiten los cinco tipos básicos, estructuras y arrays completos, incluidos vacíos y anidados. El tipo debe coincidir exactamente.
+- El argumento debe tener la forma `inout nombre`, con una variable modificable ya declarada. Se rechazan constantes, literales, resultados de llamadas, operaciones, nombres entre paréntesis y elementos, subarrays o campos como `inout datos[0]` o `inout persona.edad`.
 - `acumular(total, 5);` es inválido porque falta `inout`. También es inválido añadir la marca cuando el parámetro normal no la declara. Estos errores se detectan antes de imprimir o ejecutar nada.
 - La función puede reasignar el parámetro, usar `+=`, `-=`, `++` o `--` cuando el tipo lo permita, y modificar elementos o usar `push` y `pop` si recibe un array e importa `std::Array`.
 - Se puede reenviar el acceso: una función que recibe `inout int destino` puede llamar a otra con `inout destino`, también durante la recursión. Si se reenvía un parámetro normal, solo se modifica la copia local de esa llamada.
@@ -745,23 +896,27 @@ Las funciones pueden seguir leyendo globales, pero cualquier escritura directa e
 | --- | --- |
 | Impresión | `print(expresión);` o `println(expresión);`, con exactamente una expresión. |
 | Salida | `print` no añade salto final; `println` añade uno. Se respeta el orden del archivo. |
-| Terminación | Todas las declaraciones, asignaciones, impresiones, directivas `import`/`use`, `return` y saltos `break`/`continue` terminan en `;`. Una `function`, un `if`/`else`, un `while`, un `for` y un `foreach` completos terminan en `}` y no llevan `;`; cada instrucción de su interior sí lo lleva. Un salto de línea no sustituye el `;`. |
+| Terminación | Todas las declaraciones, asignaciones, impresiones, directivas `import`/`use`, `return` y saltos `break`/`continue` terminan en `;`. Una declaración `struct`, una `function`, un `if`/`else`, un `while`, un `for` y un `foreach` completos terminan en `}` y no llevan `;`; cada instrucción de su interior sí lo lleva. Un salto de línea no sustituye el `;`. |
 | Espacios entre tokens | Se ignoran espacios, tabulaciones, retornos de carro y saltos de línea. |
 | Texto entre comillas | Conserva Unicode, espacios, punto y coma y saltos de línea reales. Termina en la siguiente comilla del mismo tipo. |
 | Secuencias de escape | No se interpretan, conservando la regla anterior para cadenas. Una barra no escapa comillas. `\n` son dos caracteres y no cabe en un `char`. |
 | Archivo vacío | Se acepta y no imprime nada. |
 | Errores de análisis, nombres o tipos | Se informa del primer error detectado y su línea, antes de ejecutar ninguna instrucción. |
-| Errores de ejecución | Índice de array fuera de rango, división o resto por cero, desbordamiento, contenido o rango inválido en una conversión, profundidad máxima de llamadas superada, o fallo de escritura: detienen la ejecución y pueden ocurrir después de emitir parte de la salida. |
+| Errores de ejecución | Índice de array fuera de rango, división o resto por cero, desbordamiento, contenido o rango inválido en una conversión, profundidad máxima de llamadas/construcciones o valores superada, destino que cambia de tipo durante la evaluación, o fallo de escritura: detienen la ejecución y pueden ocurrir después de emitir parte de la salida. |
 
 ## Límites de esta versión
 
 Todavía no hay conversiones de arrays completos, operaciones de bits, potencia, acceso por índice a cadenas ni métodos de cadenas aparte de las conversiones de Casting, ni comentarios. Una función propia solo se admite en el ámbito global, no puede declararse dentro de un bloque ni pasar como valor, y el análisis de retorno es conservador: un bucle no basta para garantizar el retorno. El `for` exige sus tres partes. Las asignaciones abreviadas `+=`, `-=`, `++` y `--` son instrucciones, no expresiones: no se usan dentro de `println` ni como valor de una declaración. No hay prefijos `++x`/`--x` ni el resto de operadores compuestos (`*=`, `/=`, `%=`). No hay un bloque suelto ni una instrucción que declare un ámbito por sí misma más allá del cuerpo de un `if` o de un bucle. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
 
-No existen `var`, `let`, `auto`, `any`, `null`, `void`, alias como `double` o `long`, tipos sin signo, otras colecciones, clases ni tipos definidos por el usuario. Se dispone de los cinco tipos básicos y arrays homogéneos, es decir, de elementos del mismo tipo; las variables, constantes y los retornos de funciones también admiten uniones de estos tipos. `print` y `println` siguen siendo instrucciones reservadas. Las llamadas de biblioteca incluyen `len`, `push` y `pop` de `std::Array` y las conversiones explícitas de `std::Casting`, con las directivas descritas arriba; además existen funciones propias con parámetros tipados, valor de retorno opcional, `return` y recursión directa limitada, descritas más arriba.
+No existen `var`, `let`, `auto`, `any`, `null`, `void`, alias como `double` o `long`, tipos sin signo, otras colecciones, clases ni enums. Los tipos definidos por el usuario son estructuras con campos públicos, constantes opcionales por campo, valores por defecto, uniones y recursión mediante arrays o alternativas que terminen, sin métodos ni referencias compartidas. Se dispone de los cinco tipos básicos, estructuras y arrays homogéneos, es decir, de elementos del mismo tipo; las variables, constantes y los retornos de funciones también admiten uniones de estos tipos. `print` y `println` siguen siendo instrucciones reservadas. Las llamadas de biblioteca incluyen `len`, `push` y `pop` de `std::Array` y las conversiones explícitas de `std::Casting`, con las directivas descritas arriba; además existen funciones propias con parámetros tipados, valor de retorno opcional, `return` y recursión directa limitada, descritas más arriba.
 
 La ejecución recorre un árbol de sintaxis. No se genera código máquina ni bytecode y no se han medido prestaciones.
 
 ## Qué se comprueba
+
+Las catorce pruebas de ampliaciones de estructuras en [src/structure_tests.rs](../src/structure_tests.rs) comprueban campos `const` profundos, nuevos valores al reemplazar estructuras, valores por defecto por instancia, orden, nombres y solo lectura, contexto de arrays vacíos, campos unión, refinamientos e invalidación por escrituras, llamadas e índices, alias `inout`, sombras y `foreach`, recursión en árboles y cadenas, copias e igualdad, errores y cierre de ámbitos, límites de construcciones y de valores que crecen en bucles, y tipos de destinos cambiados durante la evaluación. Conservan los casos anteriores y añaden `estructuras_campos.oki`.
+
+Las trece pruebas de estructuras verifican el ejemplo `estructuras.oki`, impresión y orden de campos, igualdad nominal y por contenido, estructuras vacías, anidación y copias profundas, arrays interiores y de estructuras, biblioteca Array, `foreach`, funciones por valor y `inout`, ámbitos, retornos y uniones con `type`. Cubren declaraciones y campos inválidos, sintaxis, tipos exactos, constantes, escritura de globales, Casting rechazado, evaluación única y ordenada, cortocircuito, líneas de error y destinos invalidados durante la ejecución.
 
 Las ocho pruebas de Casting verifican el ejemplo `conversiones.oki`, las cuatro formas de llamada para todos los pares admitidos, la evaluación única de la entrada y las constantes, la convivencia con Array, el orden de importación y `use`, el aislamiento, la sintaxis y cantidad de argumentos, el rechazo de conversiones no admitidas y la conservación del tipado estricto. Incluyen límites de `i64`, redondeo de `f64`, Unicode, contenido inválido, cortocircuito, líneas de error y salida previa ante fallos de ejecución.
 
@@ -769,7 +924,7 @@ Las siete pruebas de modificación comprueban `push` y `pop` en las dos sintaxis
 
 Las nueve pruebas de biblioteca verifican las tres formas de llamada, importación y nombre corto en orden, aislamiento entre ejecuciones, arrays de todos los tipos, constantes, vacíos y anidados, composición con expresiones y bucles, sintaxis incompleta, métodos y rutas desconocidos, tipos y argumentos incorrectos, líneas de error, cortocircuito y conservación de salida ante errores de ejecución. Incluyen el ejemplo `biblioteca_arrays.oki` y conservan la prueba de `hello.oki`.
 
-Las 129 pruebas de [src/main.rs](../src/main.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Las cinco pruebas nuevas de bucles cubren el ejemplo `bucles.oki`, la repetición de `while`, el orden inicialización-condición-cuerpo-actualización del `for`, la actualización de elementos por índice, el ámbito propio del contador, la ocultación de nombres, el recorrido y la copia de elementos de `foreach` (incluidos arrays anidados y vacíos), la comprobación del tipo de elemento, el rechazo de `for` con constante y las condiciones y sintaxis inválidas de los tres bucles. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa. Las seis pruebas nuevas de asignaciones abreviadas cubren el ejemplo `asignaciones.oki`, el incremento y decremento de `int` y `float`, `+=` y `-=` con los tipos admitidos, la actualización de elementos de array (también anidados), el uso en la cabecera del `for`, el rechazo de constantes, las combinaciones de tipos incompatibles, la sintaxis incompleta (incluido el prefijo `++x`, que no se admite) y el desbordamiento en ejecución. Tres pruebas de control de bucles cubren la semántica de `break` y `continue` en `while`, `for` y `foreach`, la actualización del `for` al continuar, el destino en bucles anidados, el cierre de ámbitos y el rechazo antes de ejecutar cuando los saltos aparecen fuera de un bucle.
+Las 156 pruebas de [src/main.rs](../src/main.rs) y [src/structure_tests.rs](../src/structure_tests.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Las cinco pruebas nuevas de bucles cubren el ejemplo `bucles.oki`, la repetición de `while`, el orden inicialización-condición-cuerpo-actualización del `for`, la actualización de elementos por índice, el ámbito propio del contador, la ocultación de nombres, el recorrido y la copia de elementos de `foreach` (incluidos arrays anidados y vacíos), la comprobación del tipo de elemento, el rechazo de `for` con constante y las condiciones y sintaxis inválidas de los tres bucles. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa. Las seis pruebas nuevas de asignaciones abreviadas cubren el ejemplo `asignaciones.oki`, el incremento y decremento de `int` y `float`, `+=` y `-=` con los tipos admitidos, la actualización de elementos de array (también anidados), el uso en la cabecera del `for`, el rechazo de constantes, las combinaciones de tipos incompatibles, la sintaxis incompleta (incluido el prefijo `++x`, que no se admite) y el desbordamiento en ejecución. Tres pruebas de control de bucles cubren la semántica de `break` y `continue` en `while`, `for` y `foreach`, la actualización del `for` al continuar, el destino en bucles anidados, el cierre de ámbitos y el rechazo antes de ejecutar cuando los saltos aparecen fuera de un bucle.
 
 Las dieciséis pruebas de funciones propias cubren el ejemplo `funciones.oki`, los parámetros de tipo básico y de array, el ámbito local y la ocultación de nombres, la lectura de globales y el rechazo de constantes, el encadenamiento y la exigencia de declaración previa, la aridad y los tipos exactos sin conversiones, el rechazo de la llamada sin valor como expresión, las declaraciones inválidas (duplicados, colisión con variables, parámetros repetidos, funciones dentro de bloques y anotaciones de retorno mal formadas), la recursión directa, el límite de profundidad, el orden de evaluación de los argumentos y la conservación de la salida ante errores de ejecución. Las siete nuevas comprueban el retorno de cada tipo básico, la composición de llamadas con valor en expresiones, el retorno en ramas `if`/`else`, dentro de bucles y en funciones recursivas, la coincidencia exacta del tipo de retorno, la cobertura de todos los caminos, el rechazo de `return` fuera de una función, el `return;` de las funciones sin valor y la convivencia de funciones con y sin retorno.
 

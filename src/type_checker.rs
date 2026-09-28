@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    parser::{BinaryOp, CallArgument, Expr, Name, Stmt, UnaryOp},
+    parser::{BinaryOp, CallArgument, Expr, FieldDef, Name, Stmt, TargetStep, UnaryOp},
     stdlib::{ArrayFunction, StandardLibrary},
     value::Type,
 };
@@ -9,8 +9,10 @@ use crate::{
 #[derive(Clone)]
 struct VariableInfo {
     narrowed_type: Option<Type>,
+    narrowed_fields: HashMap<Vec<String>, Type>,
     declared_type: Type,
     is_constant: bool,
+    is_inout: bool,
 }
 
 // Una firma guarda lo necesario para comprobar las llamadas: los tipos de los
@@ -27,6 +29,7 @@ struct FunctionSignature {
 pub struct TypeChecker {
     scopes: Vec<HashMap<String, VariableInfo>>,
     functions: HashMap<String, FunctionSignature>,
+    structures: HashMap<String, Vec<FieldDef>>,
     // Tipo esperado en un `return`. La pila distingue "fuera de función" (vacía)
     // de una función sin valor (`Some(None)`) o con valor (`Some(Some(tipo))`).
     return_types: Vec<Option<Type>>,
@@ -38,6 +41,7 @@ impl TypeChecker {
     pub fn check(&mut self, statements: &[Stmt]) -> Result<(), String> {
         self.library = StandardLibrary::default();
         self.functions.clear();
+        self.structures.clear();
         self.return_types.clear();
         self.loop_depth = 0;
         self.scopes.push(HashMap::new());
@@ -55,6 +59,69 @@ impl TypeChecker {
 
     fn check_statement(&mut self, statement: &Stmt) -> Result<(), String> {
         match statement {
+            Stmt::Struct { name, fields } => {
+                if self.scopes.len() != 1 {
+                    return Err(name.error(
+                        "Las estructuras solo se permiten en el ámbito global del archivo.",
+                    ));
+                }
+                if self.structures.contains_key(&name.text) {
+                    return Err(
+                        name.error(&format!("La estructura '{}' ya está declarada.", name.text))
+                    );
+                }
+                if self.functions.contains_key(&name.text)
+                    || self.scopes[0].contains_key(&name.text)
+                {
+                    return Err(name.error("El nombre de la estructura ya está declarado como variable o función global."));
+                }
+                let mut seen = HashSet::new();
+                for field in fields {
+                    if !seen.insert(&field.name.text) {
+                        return Err(field
+                            .name
+                            .error(&format!("El campo '{}' está repetido.", field.name.text)));
+                    }
+                }
+                // El nombre propio existe al validar sus campos. Un array vacío
+                // o una alternativa no recursiva permite terminar el valor.
+                self.structures.insert(name.text.clone(), fields.clone());
+                for field in fields {
+                    self.validate_type(&field.declared_type, &field.name)?;
+                    if !Self::has_finite_alternative(&field.declared_type, &name.text) {
+                        return Err(field.name.error("El campo recursivo no permite un valor finito; usa un array o una unión con una alternativa no recursiva."));
+                    }
+                }
+                let mut defaults = self.clone();
+                defaults.scopes = vec![self.scopes[0].clone(), HashMap::new()];
+                for info in defaults.scopes[0].values_mut() {
+                    info.is_constant = true;
+                    info.narrowed_type = None;
+                    info.narrowed_fields.clear();
+                }
+                // Los nombres de campos ocultan globales incluso antes de su
+                // inicialización: un valor por defecto solo ve campos anteriores.
+                for field in fields {
+                    defaults.scopes[0].remove(&field.name.text);
+                }
+                for field in fields {
+                    if let Some(value) = &field.default_value {
+                        let actual =
+                            defaults.expression_type_expected(value, Some(&field.declared_type))?;
+                        Self::require_type(&field.name, &field.declared_type, &actual)?;
+                    }
+                    defaults.scopes[1].insert(
+                        field.name.text.clone(),
+                        VariableInfo {
+                            declared_type: field.declared_type.clone(),
+                            narrowed_type: None,
+                            narrowed_fields: HashMap::new(),
+                            is_constant: true,
+                            is_inout: false,
+                        },
+                    );
+                }
+            }
             Stmt::Call(expression) => {
                 self.check_call(expression)?;
             }
@@ -70,6 +137,15 @@ impl TypeChecker {
                     return Err(format!(
                         "Línea {line}: las funciones solo se permiten en el ámbito global del archivo."
                     ));
+                }
+                if self.structures.contains_key(&name.text) {
+                    return Err(name.error("El nombre ya está declarado como estructura."));
+                }
+                if let Some(kind) = return_type {
+                    self.validate_type(kind, name)?;
+                }
+                for parameter in parameters {
+                    self.validate_type(&parameter.declared_type, &parameter.name)?;
                 }
                 if self.functions.contains_key(&name.text) {
                     return Err(
@@ -102,14 +178,20 @@ impl TypeChecker {
                 );
                 // Los parámetros viven en el ámbito propio de la llamada; el
                 // cuerpo solo puede escribir en locales y parámetros.
+                let globals = self.scopes[0].clone();
+                for info in self.scopes[0].values_mut() {
+                    info.narrowed_fields.clear();
+                }
                 self.scopes.push(HashMap::new());
                 for parameter in parameters {
                     self.scopes.last_mut().expect("ámbito abierto").insert(
                         parameter.name.text.clone(),
                         VariableInfo {
                             narrowed_type: None,
+                            narrowed_fields: HashMap::new(),
                             declared_type: parameter.declared_type.clone(),
                             is_constant: false,
+                            is_inout: parameter.is_inout,
                         },
                     );
                 }
@@ -128,6 +210,7 @@ impl TypeChecker {
                 });
                 self.return_types.pop();
                 self.scopes.pop();
+                self.scopes[0] = globals;
                 result?;
             }
             Stmt::Return { value, line } => {
@@ -172,6 +255,10 @@ impl TypeChecker {
                 name,
                 initializer,
             } => {
+                self.validate_type(declared_type, name)?;
+                if self.scopes.len() == 1 && self.structures.contains_key(&name.text) {
+                    return Err(name.error("El nombre ya está declarado como estructura."));
+                }
                 if self
                     .scopes
                     .last()
@@ -189,42 +276,43 @@ impl TypeChecker {
                 }
                 let actual = self.expression_type_expected(initializer, Some(declared_type))?;
                 Self::require_type(name, declared_type, &actual)?;
+                self.forget_expression_effects(initializer);
                 // Registrar después del inicializador impide int x = x;.
                 self.scopes.last_mut().expect("ámbito abierto").insert(
                     name.text.clone(),
                     VariableInfo {
                         narrowed_type: None,
+                        narrowed_fields: HashMap::new(),
                         declared_type: declared_type.clone(),
                         is_constant: *is_constant,
+                        is_inout: false,
                     },
                 );
             }
-            Stmt::Assign {
-                name,
-                indices,
-                value,
-            } => {
-                let checked_target = self.assignment_target(name, indices)?;
-                let target_type = if indices.is_empty() {
+            Stmt::Assign { name, steps, value } => {
+                let checked_target = self.assignment_target_kind(name, steps, true)?;
+                let target_type = if steps.is_empty() {
                     self.lookup(name)?.declared_type.clone()
                 } else {
                     checked_target
                 };
-                let actual = self.expression_type_expected(value, Some(&target_type))?;
+                let actual = self
+                    .after_indices(steps)
+                    .expression_type_expected(value, Some(&target_type))?;
                 Self::require_type(name, &target_type, &actual)?;
-                if indices.is_empty() {
-                    self.forget_name(&name.text);
-                }
+                self.forget_target(name, steps);
             }
             Stmt::CompoundAssign {
                 name,
-                indices,
+                steps,
                 operator,
                 value,
                 line,
             } => {
-                let target_type = self.assignment_target(name, indices)?;
-                let operand_type = self.expression_type_expected(value, Some(&target_type))?;
+                let target_type = self.assignment_target(name, steps)?;
+                let operand_type = self
+                    .after_indices(steps)
+                    .expression_type_expected(value, Some(&target_type))?;
                 Self::binary_result(&target_type, operator.binary(), &operand_type).ok_or_else(
                     || {
                         format!(
@@ -236,11 +324,11 @@ impl TypeChecker {
             }
             Stmt::Increment {
                 name,
-                indices,
+                steps,
                 operator,
                 line,
             } => {
-                let target_type = self.assignment_target(name, indices)?;
+                let target_type = self.assignment_target(name, steps)?;
                 if !matches!(target_type, Type::Int | Type::Float) {
                     return Err(format!(
                         "Línea {line}: el operador '{}' no admite {target_type}.",
@@ -297,6 +385,7 @@ impl TypeChecker {
                 body,
                 line,
             } => {
+                self.validate_type(declared_type, name)?;
                 let iterable_type = self.expression_type(iterable)?;
                 let Type::Array(element) = &iterable_type else {
                     return Err(format!(
@@ -304,14 +393,17 @@ impl TypeChecker {
                     ));
                 };
                 let element = element.as_ref().clone();
+                self.forget_expression_effects(iterable);
                 Self::require_type(name, declared_type, &element)?;
                 self.scopes.push(HashMap::new());
                 self.scopes.last_mut().expect("ámbito abierto").insert(
                     name.text.clone(),
                     VariableInfo {
                         narrowed_type: None,
+                        narrowed_fields: HashMap::new(),
                         declared_type: declared_type.clone(),
                         is_constant: false,
+                        is_inout: false,
                     },
                 );
                 self.forget_loop_writes(body);
@@ -336,6 +428,9 @@ impl TypeChecker {
             Stmt::Print(expression) | Stmt::Println(expression) => {
                 self.expression_type(expression)?;
             }
+        }
+        if !matches!(statement, Stmt::Declare { .. }) {
+            self.forget_statement_effects(statement);
         }
         Ok(())
     }
@@ -385,8 +480,48 @@ impl TypeChecker {
         expected: Option<&Type>,
     ) -> Result<Type, String> {
         match expression {
-            Expr::TypeCheck { name, .. } => {
-                self.lookup(name)?;
+            Expr::Struct { name, fields } => {
+                let declared = self.structures.get(&name.text).ok_or_else(|| {
+                    name.error(&format!("La estructura '{}' no está declarada.", name.text))
+                })?;
+                let mut seen = HashSet::new();
+                let mut context = self.clone();
+                for (field, value) in fields {
+                    if !seen.insert(&field.text) {
+                        return Err(
+                            field.error(&format!("El campo '{}' está repetido.", field.text))
+                        );
+                    }
+                    let kind = self.field_type(Type::Struct(name.text.clone()), field)?;
+                    let actual = context.expression_type_expected(value, Some(&kind))?;
+                    context.forget_expression_effects(value);
+                    Self::require_type(field, &kind, &actual)?;
+                }
+                for field in declared {
+                    if field.default_value.is_none() && !seen.contains(&field.name.text) {
+                        return Err(name.error(&format!(
+                            "Falta inicializar el campo '{}' de '{}'.",
+                            field.name.text, name.text
+                        )));
+                    }
+                }
+                Ok(Type::Struct(name.text.clone()))
+            }
+            Expr::Field { object, name } => {
+                if let Some((root, fields)) = expression.field_path() {
+                    self.path_type(&root, &fields, false)
+                } else {
+                    self.field_type(self.expression_type(object)?, name)
+                }
+            }
+            Expr::TypeCheck {
+                name,
+                fields,
+                target,
+                ..
+            } => {
+                self.validate_type(target, name)?;
+                self.path_type(name, fields, false)?;
                 Ok(Type::Bool)
             }
             Expr::Cast {
@@ -450,8 +585,10 @@ impl TypeChecker {
                         "Línea {line}: un elemento de array no puede tener tipo unión {element_type}; el array debe tener un tipo de elemento concreto."
                     ));
                 }
+                let mut context = self.clone();
                 for element in elements {
-                    let actual = self.expression_type_expected(element, Some(&element_type))?;
+                    let actual = context.expression_type_expected(element, Some(&element_type))?;
+                    context.forget_expression_effects(element);
                     if actual != element_type {
                         return Err(format!(
                             "Línea {line}: elemento de array incompatible: se esperaba {element_type}, se recibió {actual}. No hay conversiones implícitas."
@@ -462,7 +599,10 @@ impl TypeChecker {
                 Ok(Type::Array(Box::new(element_type)))
             }
             Expr::Index { array, index, line } => {
-                self.indexed_type(self.expression_type(array)?, index, *line)
+                let kind = self.expression_type(array)?;
+                let mut context = self.clone();
+                context.forget_expression_effects(array);
+                context.indexed_type(kind, index, *line)
             }
             Expr::Unary {
                 operator,
@@ -492,10 +632,12 @@ impl TypeChecker {
                 // Incluso las ramas que podrían omitirse por cortocircuito
                 // deben tener nombres y tipos válidos antes de ejecutar.
                 let left_type = self.expression_type(left)?;
+                let mut after_left = self.clone();
+                after_left.forget_expression_effects(left);
                 let right_type = match operator {
                     BinaryOp::And => self.with_condition(left, true).expression_type(right)?,
                     BinaryOp::Or => self.with_condition(left, false).expression_type(right)?,
-                    _ => self.expression_type(right)?,
+                    _ => after_left.expression_type(right)?,
                 };
                 let (left, right) = (left_type, right_type);
                 Self::binary_result(&left, *operator, &right).ok_or_else(|| {
@@ -527,9 +669,14 @@ impl TypeChecker {
                     arguments.len()
                 )));
             }
+            let mut context = self.clone();
             for (argument, (expected, is_inout)) in arguments.iter().zip(&signature.parameters) {
                 let actual = match (argument, is_inout) {
-                    (CallArgument::Value(value), false) => self.expression_type_expected(value, Some(expected))?,
+                    (CallArgument::Value(value), false) => {
+                        let kind = context.expression_type_expected(value, Some(expected))?;
+                        context.forget_expression_effects(value);
+                        kind
+                    },
                     (CallArgument::InOut(target), true) => {
                         self.assignment_target(target, &[])?;
                         self.lookup(target)?.declared_type.clone()
@@ -565,17 +712,19 @@ impl TypeChecker {
         let array_type = self.expression_type(array)?;
         let result = function.result_type(&array_type, name)?;
         if !matches!(function, ArrayFunction::Len) {
-            let (target, indices) = array.clone().into_target().ok_or_else(|| {
+            let (target, steps) = array.clone().into_target().ok_or_else(|| {
                 name.error("Se necesita una variable array modificable o uno de sus subarrays.")
             })?;
-            self.assignment_target(&target, &indices)?;
+            self.assignment_target(&target, &steps)?;
         }
         if matches!(function, ArrayFunction::Push) {
             let Type::Array(element) = array_type else {
                 unreachable!("tipo comprobado")
             };
             let value = arguments.last().expect("argumento de push validado");
-            let actual = self.expression_type_expected(value, Some(&element))?;
+            let mut context = self.clone();
+            context.forget_expression_effects(array);
+            let actual = context.expression_type_expected(value, Some(&element))?;
             Self::require_type(name, &element, &actual)?;
         }
         Ok(result)
@@ -609,7 +758,26 @@ impl TypeChecker {
 
     // Tipo del destino de una asignación, rechazando constantes y comprobando
     // cada índice. Lo comparten la asignación, la compuesta y el incremento.
-    fn assignment_target(&self, name: &Name, indices: &[(Expr, usize)]) -> Result<Type, String> {
+    fn assignment_target(&self, name: &Name, steps: &[TargetStep]) -> Result<Type, String> {
+        self.assignment_target_kind(name, steps, false)
+    }
+
+    fn after_indices(&self, steps: &[TargetStep]) -> Self {
+        let mut context = self.clone();
+        for step in steps {
+            if let TargetStep::Index(index, _) = step {
+                context.forget_expression_effects(index);
+            }
+        }
+        context
+    }
+
+    fn assignment_target_kind(
+        &self,
+        name: &Name,
+        steps: &[TargetStep],
+        declared_leaf: bool,
+    ) -> Result<Type, String> {
         let info = self.lookup(name)?;
         if info.is_constant {
             return Err(name.error(&format!(
@@ -629,11 +797,98 @@ impl TypeChecker {
                 name.text
             )));
         }
-        let mut target_type = self.variable_type(name)?;
-        for (index, line) in indices {
-            target_type = self.indexed_type(target_type, index, *line)?;
+        let context = self.after_indices(steps);
+        let mut target_type = context.variable_type(name)?;
+        let mut path = Some(Vec::new());
+        for (position, step) in steps.iter().enumerate() {
+            target_type = match step {
+                TargetStep::Index(index, line) => {
+                    path = None;
+                    context.indexed_type(target_type, index, *line)?
+                }
+                TargetStep::Field(field) => {
+                    let definition = context.field_definition(&target_type, field)?;
+                    if definition.is_constant {
+                        return Err(field.error(&format!(
+                            "No se puede modificar el campo constante '{}'.",
+                            field.text
+                        )));
+                    }
+                    let mut kind = definition.declared_type.clone();
+                    if let Some(path) = &mut path {
+                        path.push(field.text.clone());
+                        if !(declared_leaf && position + 1 == steps.len())
+                            && let Some(refined) = context.lookup(name)?.narrowed_fields.get(path)
+                        {
+                            kind = refined.clone();
+                        }
+                    }
+                    kind
+                }
+            };
         }
         Ok(target_type)
+    }
+
+    fn validate_type(&self, kind: &Type, name: &Name) -> Result<(), String> {
+        match kind {
+            Type::Struct(structure) if !self.structures.contains_key(structure) => {
+                Err(name.error(&format!("El tipo estructura '{structure}' no está declarado; declara los tipos antes de usarlos.")))
+            }
+            Type::Array(element) => self.validate_type(element, name),
+            Type::Union(types) => {
+                for kind in types { self.validate_type(kind, name)?; }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn has_finite_alternative(kind: &Type, own_name: &str) -> bool {
+        match kind {
+            Type::Struct(name) => name != own_name,
+            Type::Union(types) => types
+                .iter()
+                .any(|kind| Self::has_finite_alternative(kind, own_name)),
+            _ => true,
+        }
+    }
+
+    fn field_definition(&self, object: &Type, name: &Name) -> Result<&FieldDef, String> {
+        let Type::Struct(structure) = object else {
+            return Err(name.error(&format!(
+                "Solo las estructuras tienen campos; se recibió {object}."
+            )));
+        };
+        self.structures[structure]
+            .iter()
+            .find(|field| field.name.text == name.text)
+            .ok_or_else(|| {
+                name.error(&format!(
+                    "El campo '{}' no existe en '{structure}'.",
+                    name.text
+                ))
+            })
+    }
+
+    fn field_type(&self, object: Type, name: &Name) -> Result<Type, String> {
+        Ok(self.field_definition(&object, name)?.declared_type.clone())
+    }
+
+    fn path_type(&self, root: &Name, fields: &[Name], declared_leaf: bool) -> Result<Type, String> {
+        let info = self.lookup(root)?;
+        let mut kind = self.variable_type(root)?;
+        let mut path = Vec::new();
+        for (index, field) in fields.iter().enumerate() {
+            kind = self.field_type(kind, field)?;
+            path.push(field.text.clone());
+            if !(declared_leaf && index + 1 == fields.len())
+                && let Some(refined) = info.narrowed_fields.get(&path)
+            {
+                kind = refined.clone();
+            }
+        }
+        Ok(kind)
     }
 
     fn indexed_type(&self, array: Type, index: &Expr, line: usize) -> Result<Type, String> {
@@ -668,6 +923,178 @@ impl TypeChecker {
             .find_map(|scope| scope.get_mut(name))
         {
             info.narrowed_type = None;
+            info.narrowed_fields.clear();
+        }
+    }
+
+    fn forget_alias_fields(&mut self, root: &Name) {
+        let alias = self.lookup(root).is_ok_and(|info| info.is_inout);
+        if alias {
+            // Dos parámetros inout pueden señalar la misma variable global.
+            for (index, scope) in self.scopes.iter_mut().enumerate() {
+                for info in scope.values_mut() {
+                    if index == 0 || info.is_inout {
+                        info.narrowed_fields.clear();
+                    }
+                }
+            }
+        } else if let Some(info) = self
+            .scopes
+            .iter_mut()
+            .rev()
+            .find_map(|scope| scope.get_mut(&root.text))
+        {
+            info.narrowed_fields.clear();
+        }
+    }
+
+    fn forget_target(&mut self, root: &Name, steps: &[TargetStep]) {
+        if self.lookup(root).is_ok_and(|info| info.is_inout) {
+            self.forget_alias_fields(root);
+        }
+        if steps.is_empty() {
+            self.forget_name(&root.text);
+            return;
+        }
+        let path: Option<Vec<_>> = steps
+            .iter()
+            .map(|step| match step {
+                TargetStep::Field(field) => Some(field.text.clone()),
+                TargetStep::Index(_, _) => None,
+            })
+            .collect();
+        if let Some(info) = self
+            .scopes
+            .iter_mut()
+            .rev()
+            .find_map(|scope| scope.get_mut(&root.text))
+        {
+            info.narrowed_fields
+                .retain(|key, _| path.as_ref().is_some_and(|path| !key.starts_with(path)));
+        }
+    }
+
+    // Las funciones reciben estructuras completas. Un permiso inout puede
+    // cambiar cualquier campo, aunque la función concreta no lo haga.
+    fn forget_expression_effects(&mut self, expression: &Expr) {
+        match expression {
+            Expr::Call { arguments, .. } => {
+                for argument in arguments {
+                    match argument {
+                        CallArgument::Value(value) => self.forget_expression_effects(value),
+                        CallArgument::InOut(name) => self.forget_alias_fields(name),
+                    }
+                }
+            }
+            Expr::Struct { fields, .. } => {
+                for (_, value) in fields {
+                    self.forget_expression_effects(value);
+                }
+            }
+            Expr::Array { elements, .. } => {
+                for element in elements {
+                    self.forget_expression_effects(element);
+                }
+            }
+            Expr::LibraryCall {
+                receiver,
+                arguments,
+                ..
+            } => {
+                if let Some(receiver) = receiver {
+                    self.forget_expression_effects(receiver);
+                }
+                for argument in arguments {
+                    self.forget_expression_effects(argument);
+                }
+            }
+            Expr::Field { object, .. } => self.forget_expression_effects(object),
+            Expr::Cast { value, .. } | Expr::Unary { operand: value, .. } => {
+                self.forget_expression_effects(value)
+            }
+            Expr::Index { array, index, .. } => {
+                self.forget_expression_effects(array);
+                self.forget_expression_effects(index);
+            }
+            Expr::Binary { left, right, .. } => {
+                self.forget_expression_effects(left);
+                self.forget_expression_effects(right);
+            }
+            Expr::Literal(_) | Expr::Variable(_) | Expr::TypeCheck { .. } => {}
+        }
+    }
+
+    fn forget_statement_effects(&mut self, statement: &Stmt) {
+        match statement {
+            Stmt::Call(value)
+            | Stmt::Print(value)
+            | Stmt::Println(value)
+            | Stmt::Declare {
+                initializer: value, ..
+            } => self.forget_expression_effects(value),
+            Stmt::Assign { steps, value, .. } | Stmt::CompoundAssign { steps, value, .. } => {
+                for step in steps {
+                    if let TargetStep::Index(index, _) = step {
+                        self.forget_expression_effects(index);
+                    }
+                }
+                self.forget_expression_effects(value);
+            }
+            Stmt::Increment { steps, .. } => {
+                for step in steps {
+                    if let TargetStep::Index(index, _) = step {
+                        self.forget_expression_effects(index);
+                    }
+                }
+            }
+            Stmt::Return {
+                value: Some(value), ..
+            } => self.forget_expression_effects(value),
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.forget_expression_effects(condition);
+                for statement in then_branch {
+                    self.forget_statement_effects(statement);
+                }
+                if let Some(branch) = else_branch {
+                    for statement in branch {
+                        self.forget_statement_effects(statement);
+                    }
+                }
+            }
+            Stmt::While {
+                condition, body, ..
+            } => {
+                self.forget_expression_effects(condition);
+                for statement in body {
+                    self.forget_statement_effects(statement);
+                }
+            }
+            Stmt::For {
+                initializer,
+                condition,
+                update,
+                body,
+                ..
+            } => {
+                self.forget_statement_effects(initializer);
+                self.forget_expression_effects(condition);
+                for statement in body {
+                    self.forget_statement_effects(statement);
+                }
+                self.forget_statement_effects(update);
+            }
+            Stmt::Foreach { iterable, body, .. } => {
+                self.forget_expression_effects(iterable);
+                for statement in body {
+                    self.forget_statement_effects(statement);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -680,10 +1107,9 @@ impl TypeChecker {
     }
 
     fn forget_statement_writes(&mut self, statement: &Stmt) {
+        self.forget_statement_effects(statement);
         match statement {
-            Stmt::Assign { name, indices, .. } if indices.is_empty() => {
-                self.forget_name(&name.text)
-            }
+            Stmt::Assign { name, steps, .. } => self.forget_target(name, steps),
             Stmt::If {
                 then_branch,
                 else_branch,
@@ -712,6 +1138,7 @@ impl TypeChecker {
     fn with_condition(&self, condition: &Expr, truth: bool) -> Self {
         let mut context = self.clone();
         context.assume_condition(condition, truth);
+        context.forget_expression_effects(condition);
         context
     }
 
@@ -719,32 +1146,41 @@ impl TypeChecker {
         match condition {
             Expr::TypeCheck {
                 name,
+                fields,
                 target,
                 negated,
             } => {
-                let Some(info) = self
-                    .scopes
-                    .iter_mut()
-                    .rev()
-                    .find_map(|scope| scope.get_mut(&name.text))
-                else {
+                let Ok(current) = self.path_type(name, fields, false) else {
                     return;
                 };
-                let current = info.narrowed_type.as_ref().unwrap_or(&info.declared_type);
                 let alternatives = match current {
-                    Type::Union(types) => types.clone(),
-                    kind => vec![kind.clone()],
+                    Type::Union(types) => types,
+                    kind => vec![kind],
                 };
                 let mut remaining: Vec<_> = alternatives
                     .into_iter()
                     .filter(|kind| (kind == target) == (truth != *negated))
                     .collect();
-                // Una rama imposible sigue comprobándose sin inventar un tipo.
-                info.narrowed_type = match remaining.len() {
-                    0 => info.narrowed_type.clone(),
-                    1 => Some(remaining.remove(0)),
-                    _ => Some(Type::Union(remaining)),
+                let refined = match remaining.len() {
+                    0 => return,
+                    1 => remaining.remove(0),
+                    _ => Type::Union(remaining),
                 };
+                if let Some(info) = self
+                    .scopes
+                    .iter_mut()
+                    .rev()
+                    .find_map(|scope| scope.get_mut(&name.text))
+                {
+                    if fields.is_empty() {
+                        info.narrowed_type = Some(refined);
+                    } else {
+                        info.narrowed_fields.insert(
+                            fields.iter().map(|field| field.text.clone()).collect(),
+                            refined,
+                        );
+                    }
+                }
             }
             Expr::Unary {
                 operator: UnaryOp::Not,
@@ -799,6 +1235,33 @@ impl TypeChecker {
             for (name, info) in scope {
                 let a = &left.scopes[index][name];
                 let b = &right.scopes[index][name];
+                info.narrowed_fields = a
+                    .narrowed_fields
+                    .iter()
+                    .filter_map(|(path, kind)| {
+                        let other = b.narrowed_fields.get(path)?;
+                        let mut types = match kind {
+                            Type::Union(types) => types.clone(),
+                            kind => vec![kind.clone()],
+                        };
+                        for kind in match other {
+                            Type::Union(types) => types.clone(),
+                            kind => vec![kind.clone()],
+                        } {
+                            if !types.contains(&kind) {
+                                types.push(kind);
+                            }
+                        }
+                        Some((
+                            path.clone(),
+                            if types.len() == 1 {
+                                types.remove(0)
+                            } else {
+                                Type::Union(types)
+                            },
+                        ))
+                    })
+                    .collect();
                 let a = a.narrowed_type.as_ref().unwrap_or(&a.declared_type);
                 let b = b.narrowed_type.as_ref().unwrap_or(&b.declared_type);
                 let alternatives = match &info.declared_type {

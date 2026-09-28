@@ -1,0 +1,76 @@
+struct Nodo {
+    int valor;
+    Nodo || bool siguiente = false;
+}
+
+struct Lista {
+    Nodo || bool primero = false;
+}
+
+function insertar_al_inicio(inout Lista lista, int valor) {
+    lista.primero = Nodo { valor: valor, siguiente: lista.primero };
+}
+
+function imprimir_lista(Lista lista) {
+    Nodo || bool actual = lista.primero;
+    while (type actual == Nodo) {
+        print(actual.valor);
+        print(" -> ");
+        actual = actual.siguiente;
+    }
+    println("fin");
+}
+
+function longitud(Lista lista) -> int {
+    int total = 0;
+    Nodo || bool actual = lista.primero;
+    while (type actual == Nodo) {
+        total++;
+        actual = actual.siguiente;
+    }
+    return total;
+}
+
+function contiene(Lista lista, int valor) -> bool {
+    Nodo || bool actual = lista.primero;
+    while (type actual == Nodo) {
+        if (actual.valor == valor) {
+            return true;
+        }
+        actual = actual.siguiente;
+    }
+    return false;
+}
+
+function quitar_primero(inout Lista lista) -> bool {
+    if (type lista.primero == Nodo) {
+        Nodo primero = lista.primero;
+        lista.primero = primero.siguiente;
+        return true;
+    }
+    return false;
+}
+
+Lista lista = Lista {};
+println("Lista vacía:");
+imprimir_lista(lista);
+println(quitar_primero(inout lista));
+
+insertar_al_inicio(inout lista, 30);
+insertar_al_inicio(inout lista, 20);
+insertar_al_inicio(inout lista, 10);
+println("Lista con tres nodos:");
+imprimir_lista(lista);
+println("Longitud:");
+println(longitud(lista));
+println("Contiene 20:");
+println(contiene(lista, 20));
+println("Contiene 99:");
+println(contiene(lista, 99));
+
+Lista copia = lista;
+println("Quitar el primer nodo de la copia:");
+println(quitar_primero(inout copia));
+imprimir_lista(copia);
+println("La original conserva sus nodos:");
+imprimir_lista(lista);

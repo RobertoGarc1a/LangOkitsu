@@ -7,7 +7,8 @@ use crate::{
 // al ejecutar, porque puede proceder de variables o de otras expresiones.
 pub fn check_type(source: &Type, target: &Type, name: &Name) -> Result<(), String> {
     use Type::*;
-    let basic = !matches!(source, Array(_) | Union(_)) && !matches!(target, Array(_) | Union(_));
+    let basic = !matches!(source, Array(_) | Union(_) | Struct(_))
+        && !matches!(target, Array(_) | Union(_) | Struct(_));
     let compatible = source == target
         || matches!(
             (source, target),

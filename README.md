@@ -40,7 +40,53 @@ const int limite = 10;
 println(limite);
 ```
 
-Una asignación posterior como `limite = 20;` es un error antes de ejecutar el archivo. `const` admite los tipos básicos, los arrays y las uniones y exige un valor inicial. Consulta las [reglas de las constantes](docs/estado-actual.md#constantes).
+Una asignación posterior como `limite = 20;` es un error antes de ejecutar el archivo. `const` admite los tipos básicos, las estructuras, los arrays y las uniones y exige un valor inicial. Consulta las [reglas de las constantes](docs/estado-actual.md#constantes).
+
+Una **estructura** agrupa campos con nombres y tipos. Se declara con `struct` antes de usarla:
+
+```oki
+struct Persona {
+    string nombre;
+    int edad;
+}
+Persona ana = Persona { nombre: "Ana", edad: 30 };
+Persona copia = ana;
+copia.edad++;
+println(ana);
+println(copia.edad);
+```
+
+Imprime `Persona { nombre: "Ana", edad: 30 }` y `31`. Los campos sin valor por defecto son obligatorios; la copia es independiente y `const` protege también los campos interiores. Las estructuras pueden contener otras ya declaradas y arrays, y usarse como parámetros y retornos de funciones. Para modificar el original desde una función se conserva `inout`. Consulta las [reglas de estructuras](docs/estado-actual.md#estructuras-con-campos) y el ejemplo [estructuras.oki](examples/estructuras.oki).
+
+Los campos también admiten `const`, uniones y valores por defecto:
+
+```oki
+struct Registro {
+    const int id;
+    int doble = id * 2;
+    int || string valor = 0;
+}
+Registro dato = Registro { id: 3 };
+println(dato.doble);
+if (type dato.valor == int) {
+    dato.valor++;
+    println(dato.valor);
+}
+```
+
+Imprime `6` y `1`. `id` se fija al construir; los valores por defecto se calculan para cada instancia y pueden leer campos anteriores. Una asignación completa puede cambiar la alternativa de `valor`, tras lo que hay que volver a comprobar su tipo. Todos los campos son públicos; no hay métodos propios.
+
+Para representar un árbol, una estructura puede contener arrays de su propio tipo:
+
+```oki
+struct Nodo { int valor; Nodo[] hijos = []; }
+Nodo raiz = Nodo { valor: 1, hijos: [Nodo { valor: 2 }] };
+println(raiz.hijos[0].valor);
+```
+
+Imprime `2`. Un array vacío termina la recursión. También se pueden formar listas con una unión como `Nodo || bool` y un booleano como terminación, manteniendo las copias independientes. Consulta el ejemplo [estructuras_campos.oki](examples/estructuras_campos.oki) y las [reglas de recursión](docs/estado-actual.md#estructuras-recursivas).
+
+El ejemplo [lista_enlazada.oki](examples/lista_enlazada.oki) construye `10 -> 20 -> 30 -> fin`, recorre los nodos, cuenta y busca elementos, elimina el primero y demuestra las copias independientes. Consulta su [explicación y salida](docs/estado-actual.md#ejemplo-de-lista-enlazada).
 
 Un **array** guarda una secuencia de elementos del mismo tipo. Los índices empiezan en cero:
 
@@ -223,7 +269,7 @@ acumular(inout total, 5);
 println(total);
 ```
 
-Imprime `5`. Sin `inout`, los parámetros reciben copias independientes. Omitir la marca en uno de los dos sitios, pasar una constante o escribir directamente en una global desde una función produce un error antes de ejecutar. En esta versión se pasan variables completas, de tipo básico o array; no elementos como `inout datos[0]`. Consulta las [reglas de inout](docs/estado-actual.md#parámetros-inout).
+Imprime `5`. Sin `inout`, los parámetros reciben copias independientes. Omitir la marca en uno de los dos sitios, pasar una constante o escribir directamente en una global desde una función produce un error antes de ejecutar. En esta versión se pasan variables completas, de tipo básico, estructura o array; no elementos como `inout datos[0]`. Consulta las [reglas de inout](docs/estado-actual.md#parámetros-inout).
 
 ```sh
 cargo run -- examples/hello.oki
@@ -240,6 +286,9 @@ cargo run -- examples/conversiones.oki
 cargo run -- examples/funciones.oki
 cargo run -- examples/retornos_union.oki
 cargo run -- examples/variables_union.oki
+cargo run -- examples/estructuras.oki
+cargo run -- examples/estructuras_campos.oki
+cargo run -- examples/lista_enlazada.oki
 ```
 
 ## Documentación para aprender
@@ -262,9 +311,10 @@ Seguimos el intérprete de árbol de [Crafting Interpreters](https://craftingint
 | Archivo | Responsabilidad |
 | --- | --- |
 | [src/main.rs](src/main.rs) | Lectura del archivo, coordinación de etapas y pruebas. |
+| [src/structure_tests.rs](src/structure_tests.rs) | Pruebas de campos constantes, valores por defecto, uniones y estructuras recursivas. |
 | [src/scanner.rs](src/scanner.rs) | Reconocer tokens y sus líneas (capítulo 4). |
 | [src/parser.rs](src/parser.rs) | Definir el AST y construirlo mediante análisis descendente (capítulos 5, 6 y 8). |
-| [src/value.rs](src/value.rs) | Representar tipos, valores y su impresión (capítulo 7). |
+| [src/value.rs](src/value.rs) | Representar tipos, valores básicos, arrays y estructuras, y su impresión (capítulo 7). |
 | [src/type_checker.rs](src/type_checker.rs) | Comprobar nombres y tipos antes de ejecutar; adaptación propia para el tipado estricto. |
 | [src/interpreter.rs](src/interpreter.rs) | Evaluar el AST y guardar los valores de las variables (capítulos 7 y 8). |
 | [src/stdlib.rs](src/stdlib.rs) | Habilitar por separado `Array` y `Casting`, resolver llamadas y ejecutar `len`, `push` y `pop` de arrays. |

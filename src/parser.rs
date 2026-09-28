@@ -32,9 +32,32 @@ pub enum CallArgument {
 }
 
 #[derive(Clone, Debug)]
+pub struct FieldDef {
+    pub name: Name,
+    pub declared_type: Type,
+    pub is_constant: bool,
+    pub default_value: Option<Expr>,
+}
+
+#[derive(Clone, Debug)]
+pub enum TargetStep {
+    Index(Expr, usize),
+    Field(Name),
+}
+
+#[derive(Clone, Debug)]
 pub enum Expr {
+    Struct {
+        name: Name,
+        fields: Vec<(Name, Expr)>,
+    },
+    Field {
+        object: Box<Expr>,
+        name: Name,
+    },
     TypeCheck {
         name: Name,
+        fields: Vec<Name>,
         target: Type,
         negated: bool,
     },
@@ -79,14 +102,35 @@ pub enum Expr {
 }
 
 impl Expr {
-    // Solo una variable y sus índices identifican almacenamiento modificable.
-    pub fn into_target(self) -> Option<(Name, Vec<(Expr, usize)>)> {
+    // Solo las rutas de campos sin índices son estables para refinar tipos.
+    pub fn field_path(&self) -> Option<(Name, Vec<Name>)> {
+        match self {
+            Self::Variable(name) => Some((name.clone(), Vec::new())),
+            Self::Field { object, name } => {
+                let (root, mut fields) = object.field_path()?;
+                fields.push(name.clone());
+                Some((root, fields))
+            }
+            _ => None,
+        }
+    }
+
+    // Una variable seguida de campos e índices identifica almacenamiento modificable.
+    pub fn into_target(self) -> Option<(Name, Vec<TargetStep>)> {
         match self {
             Self::Variable(name) => Some((name, Vec::new())),
             Self::Index { array, index, line } => {
-                let (name, mut indices) = array.into_target()?;
-                indices.push((*index, line));
-                Some((name, indices))
+                let (name, mut steps) = array.into_target()?;
+                steps.push(TargetStep::Index(*index, line));
+                Some((name, steps))
+            }
+            Self::Field {
+                object,
+                name: field,
+            } => {
+                let (name, mut steps) = object.into_target()?;
+                steps.push(TargetStep::Field(field));
+                Some((name, steps))
             }
             _ => None,
         }
@@ -195,6 +239,10 @@ impl BinaryOp {
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
+    Struct {
+        name: Name,
+        fields: Vec<FieldDef>,
+    },
     Call(Expr),
     Function {
         name: Name,
@@ -220,19 +268,19 @@ pub enum Stmt {
     },
     Assign {
         name: Name,
-        indices: Vec<(Expr, usize)>,
+        steps: Vec<TargetStep>,
         value: Expr,
     },
     CompoundAssign {
         name: Name,
-        indices: Vec<(Expr, usize)>,
+        steps: Vec<TargetStep>,
         operator: AssignOp,
         value: Expr,
         line: usize,
     },
     Increment {
         name: Name,
-        indices: Vec<(Expr, usize)>,
+        steps: Vec<TargetStep>,
         operator: IncrementOp,
         line: usize,
     },
@@ -298,6 +346,7 @@ impl Parser {
             TokenKind::For => return self.for_statement(),
             TokenKind::Foreach => return self.foreach_statement(),
             TokenKind::Function => return self.function_declaration(),
+            TokenKind::Struct => return self.struct_declaration(),
             _ => {}
         }
         let statement = match self.peek().kind {
@@ -314,6 +363,7 @@ impl Parser {
             TokenKind::Return => self.return_statement()?,
             TokenKind::Import | TokenKind::Use => self.import_statement()?,
             TokenKind::Const => self.declaration()?,
+            TokenKind::Identifier(_) if self.starts_named_declaration() => self.declaration()?,
             TokenKind::Type(_) if self.tokens[self.current + 1].kind != TokenKind::LeftParen => {
                 self.declaration()?
             }
@@ -342,7 +392,7 @@ impl Parser {
             }
             _ => {
                 return Err(self.error(
-                    "Se esperaba una declaración con tipo, una asignación, 'import', 'use', 'if', 'while', 'for', 'foreach', 'function', 'return', 'print' o 'println'.",
+                    "Se esperaba una declaración con tipo, una asignación, 'import', 'use', 'if', 'while', 'for', 'foreach', 'function', 'struct', 'return', 'print' o 'println'.",
                 ));
             }
         };
@@ -351,6 +401,84 @@ impl Parser {
             "Se esperaba ';' al final de la instrucción.",
         )?;
         Ok(statement)
+    }
+
+    // El contexto de tokens distingue `Persona[] datos` de `datos[0]`.
+    // No necesitamos conocer aquí si el tipo existe: lo comprobará TypeChecker.
+    fn starts_named_declaration(&self) -> bool {
+        if !matches!(self.peek().kind, TokenKind::Identifier(_)) {
+            return false;
+        }
+        let mut next = self.current + 1;
+        while self.tokens[next].kind == TokenKind::LeftBracket
+            && self
+                .tokens
+                .get(next + 1)
+                .is_some_and(|t| t.kind == TokenKind::RightBracket)
+        {
+            next += 2;
+        }
+        matches!(
+            self.tokens[next].kind,
+            TokenKind::Identifier(_) | TokenKind::OrOr
+        )
+    }
+
+    fn struct_declaration(&mut self) -> Result<Stmt, String> {
+        self.current += 1;
+        let name = self.name()?;
+        self.consume(
+            TokenKind::LeftBrace,
+            "Se esperaba '{' después del nombre de la estructura.",
+        )?;
+        let mut fields = Vec::new();
+        while self.peek().kind != TokenKind::RightBrace {
+            let is_constant = self.peek().kind == TokenKind::Const;
+            if is_constant {
+                self.current += 1;
+            }
+            let declared_type = self.union_type()?;
+            let name = self.name()?;
+            let default_value = if self.peek().kind == TokenKind::Equal {
+                self.current += 1;
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            self.consume(TokenKind::Semicolon, "Se esperaba ';' después del campo.")?;
+            fields.push(FieldDef {
+                name,
+                declared_type,
+                is_constant,
+                default_value,
+            });
+        }
+        self.current += 1;
+        Ok(Stmt::Struct { name, fields })
+    }
+
+    fn struct_literal(&mut self, name: Name) -> Result<Expr, String> {
+        self.current += 1;
+        let mut fields = Vec::new();
+        if self.peek().kind != TokenKind::RightBrace {
+            loop {
+                let field = self.name()?;
+                self.consume(
+                    TokenKind::Colon,
+                    "Se esperaba ':' después del nombre del campo.",
+                )?;
+                fields.push((field, self.expression()?));
+                if self.peek().kind != TokenKind::Comma {
+                    break;
+                }
+                self.current += 1;
+            }
+        }
+        self.consume(
+            TokenKind::RightBrace,
+            "Se esperaba '}' después de los campos de la estructura.",
+        )?;
+        Ok(Expr::Struct { name, fields })
     }
 
     fn import_statement(&mut self) -> Result<Stmt, String> {
@@ -515,9 +643,19 @@ impl Parser {
     // dentro de un 'for'.
     fn assignment(&mut self) -> Result<Stmt, String> {
         let name = self.name()?;
-        let mut indices = Vec::new();
-        while self.peek().kind == TokenKind::LeftBracket {
-            indices.push(self.index()?);
+        let mut steps = Vec::new();
+        loop {
+            match self.peek().kind {
+                TokenKind::LeftBracket => {
+                    let (index, line) = self.index()?;
+                    steps.push(TargetStep::Index(index, line));
+                }
+                TokenKind::Dot => {
+                    self.current += 1;
+                    steps.push(TargetStep::Field(self.name()?));
+                }
+                _ => break,
+            }
         }
         let line = self.peek().line;
         match self.peek().kind {
@@ -525,7 +663,7 @@ impl Parser {
                 self.current += 1;
                 Ok(Stmt::Assign {
                     name,
-                    indices,
+                    steps,
                     value: self.expression()?,
                 })
             }
@@ -538,7 +676,7 @@ impl Parser {
                 self.current += 1;
                 Ok(Stmt::CompoundAssign {
                     name,
-                    indices,
+                    steps,
                     operator,
                     value: self.expression()?,
                     line,
@@ -553,7 +691,7 @@ impl Parser {
                 self.current += 1;
                 Ok(Stmt::Increment {
                     name,
-                    indices,
+                    steps,
                     operator,
                     line,
                 })
@@ -583,12 +721,16 @@ impl Parser {
         })
     }
 
-    // Un tipo básico seguido de los '[]' que indican niveles de array.
+    // Un tipo básico o nombrado seguido de los '[]' que indican niveles de array.
     fn array_type(&mut self) -> Result<Type, String> {
-        let TokenKind::Type(basic) = &self.peek().kind else {
-            return Err(self.error("Se esperaba un tipo (int, float, bool, char o string)."));
+        let mut declared_type = match &self.peek().kind {
+            TokenKind::Type(basic) => basic.clone(),
+            TokenKind::Identifier(name) => Type::Struct(name.clone()),
+            _ => {
+                return Err(self
+                    .error("Se esperaba un tipo (int, float, bool, char, string o estructura)."));
+            }
         };
-        let mut declared_type = basic.clone();
         self.current += 1;
         while self.peek().kind == TokenKind::LeftBracket {
             self.current += 1;
@@ -655,6 +797,7 @@ impl Parser {
         // una ya existente. Condición y actualización son obligatorias.
         let initializer = match self.peek().kind {
             TokenKind::Const | TokenKind::Type(_) => self.declaration()?,
+            TokenKind::Identifier(_) if self.starts_named_declaration() => self.declaration()?,
             TokenKind::Identifier(_) => self.assignment()?,
             _ => {
                 return Err(
@@ -890,7 +1033,12 @@ impl Parser {
                 TokenKind::Dot => {
                     self.current += 1;
                     let path = vec![self.name()?];
-                    expression = if path[0].text == "cast" {
+                    expression = if self.peek().kind != TokenKind::LeftParen {
+                        Expr::Field {
+                            object: Box::new(expression),
+                            name: path.into_iter().next().expect("campo"),
+                        }
+                    } else if path[0].text == "cast" {
                         self.consume(TokenKind::LeftParen, "Se esperaba '(' después de 'cast'.")?;
                         let target = self.array_type()?;
                         self.consume(
@@ -949,6 +1097,11 @@ impl Parser {
             TokenKind::TypeOf => {
                 self.current += 1;
                 let name = self.name()?;
+                let mut fields = Vec::new();
+                while self.peek().kind == TokenKind::Dot {
+                    self.current += 1;
+                    fields.push(self.name()?);
+                }
                 let negated = match self.peek().kind {
                     TokenKind::EqualEqual => false,
                     TokenKind::BangEqual => true,
@@ -956,7 +1109,7 @@ impl Parser {
                 };
                 self.current += 1;
                 let target = self.array_type()?;
-                Ok(Expr::TypeCheck { name, target, negated })
+                Ok(Expr::TypeCheck { name, fields, target, negated })
             }
             TokenKind::Type(_) => self.conversion_call(Vec::new()),
             TokenKind::LeftBracket => {
@@ -997,6 +1150,9 @@ impl Parser {
                     path.push(self.name()?);
                 }
                 if path.len() == 1 {
+                    if self.peek().kind == TokenKind::LeftBrace {
+                        return self.struct_literal(path.remove(0));
+                    }
                     if self.peek().kind == TokenKind::LeftParen {
                         return Ok(Expr::Call {
                             name: path.remove(0),

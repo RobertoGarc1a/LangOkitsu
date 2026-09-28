@@ -1,0 +1,38 @@
+struct Registro {
+    const int id;
+    int doble = id * 2;
+    int || string valor = 0;
+    int[] notas = [];
+}
+
+Registro dato = Registro { id: 3 };
+println(dato.doble);
+if (type dato.valor == int) {
+    dato.valor += 5;
+    println(dato.valor);
+}
+dato.valor = "listo";
+if (type dato.valor == string) {
+    println(dato.valor + "!");
+}
+
+struct Nodo {
+    int valor;
+    Nodo[] hijos = [];
+}
+
+Nodo raiz = Nodo { valor: 1, hijos: [Nodo { valor: 2 }] };
+Nodo copia = raiz;
+copia.hijos[0].valor = 9;
+println(raiz);
+println(copia);
+
+struct Enlace {
+    int valor;
+    Enlace || bool siguiente = false;
+}
+
+Enlace lista = Enlace { valor: 10, siguiente: Enlace { valor: 20 } };
+if (type lista.siguiente == Enlace) {
+    println(lista.siguiente.valor);
+}

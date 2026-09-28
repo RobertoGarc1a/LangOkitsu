@@ -25,7 +25,7 @@ El AST validado conserva el mismo programa. El comprobador completa únicamente 
 
 ## 1. Leer y coordinar
 
-[main.rs](../src/main.rs) conserva `main()`, `run_file()` y las pruebas. `run_file()` obtiene la ruta mediante `env::args_os().nth(1)`, lee el archivo con `fs::read_to_string` y llama a `run()` con el texto y la salida estándar.
+[main.rs](../src/main.rs) conserva `main()`, `run_file()` y las pruebas generales; las pruebas de ampliaciones de estructuras están en [structure_tests.rs](../src/structure_tests.rs). `run_file()` obtiene la ruta mediante `env::args_os().nth(1)`, lee el archivo con `fs::read_to_string` y llama a `run()` con el texto y la salida estándar.
 
 ```rust
 let tokens = Scanner::new(source).scan_tokens()?;
@@ -65,13 +65,15 @@ Los tokens son:
 
 `Eof` es una marca añadida, no un texto del archivo. `Scanner` recorre caracteres Unicode con `Peekable<Chars>`: puede mirar el siguiente carácter antes de consumirlo. Incrementa el contador al encontrar saltos de línea, también dentro de las comillas.
 
-`identifier()` lee primero el nombre completo y después reconoce las palabras reservadas. Así distingue `int` de `int2` y `println` de `println2`. Reconoce `const` como el token `Const`, los cinco tipos, `break`, `continue`, `function`, `return`, `inout` (token `InOut`), `type` (token `TypeOf`) y los booleanos `true` y `false`, además de las instrucciones de impresión.
+`identifier()` lee primero el nombre completo y después reconoce las palabras reservadas. Así distingue `int` de `int2` y `println` de `println2`. Reconoce `const` como el token `Const`, los cinco tipos, `break`, `continue`, `function`, `struct` (token `Struct`), `return`, `inout` (token `InOut`), `type` (token `TypeOf`) y los booleanos `true` y `false`, además de las instrucciones de impresión.
 
 `quoted()` recoge texto hasta la siguiente comilla del mismo tipo. Para comillas dobles produce un `Value::String`; para comillas simples exige exactamente un valor escalar Unicode y produce `Value::Char`. No procesa escapes, conservando el comportamiento previo de las cadenas.
 
 `number()` reconoce dígitos, una parte decimal opcional y un exponente opcional. Guarda el texto en `Number` para que `number()` del parser lo convierta junto con el posible signo. El signo `-` es un token separado. Esta decisión permite aceptar `-9223372036854775808`: su magnitud positiva no cabe en `i64`, pero el número completo sí.
 
 El scanner reconoce además `[` (`LeftBracket`), `]` (`RightBracket`) y `,` (`Comma`), para tipos de array, literales y accesos. El parser decide qué función cumplen según dónde aparezcan.
+
+El scanner reconoce `:` como `Colon` para campos de una construcción y `::` como `ColonColon` para rutas de biblioteca; `.` sigue siendo `Dot` para campos, métodos de Array y `cast`.
 
 El scanner también reconoce los operadores `+`, `-`, `*`, `/`, `%`, `!`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&` y `||`, además de `++`, `--`, `+=` y `-=`. `paired()` mira si un signo lleva un segundo `=`: así distingue la asignación `=` de la igualdad `==`. `compound_or_single()` mira un carácter por delante de `+` o `-` y decide entre el operador doble (`++`, `--`), la variante con `=` (`+=`, `-=`) y el signo aislado. Un `&` o `|` aislado se rechaza. El signo del exponente sigue perteneciendo al número (`1e-2`), mientras que en `2-1` el menos es un token independiente. Como `--` es ahora un token propio, `1--2` ya no significa `1 - (-2)` y se rechaza.
 
@@ -85,10 +87,14 @@ El **parser**, o analizador sintáctico, comprueba cómo encajan los tokens. [pa
 
 ```text
 program     → statement* EOF
-statement   → simpleStmt ";" | ifStmt | whileStmt | forStmt | foreachStmt | functionStmt | "break" ";" | "continue" ";"
+statement   → simpleStmt ";" | ifStmt | whileStmt | forStmt | foreachStmt | functionStmt | structStmt | "break" ";" | "continue" ";"
 simpleStmt  → declaration | assignment | printStmt | importStmt | callStmt | returnStmt
 callStmt    → postfix  (su nodo exterior debe ser LibraryCall, Cast o Call)
 functionStmt→ "function" IDENTIFIER "(" (parameter ("," parameter)*)? ")" ("->" unionType)? block
+structStmt  → "struct" IDENTIFIER "{" fieldDef* "}"
+fieldDef    → "const"? unionType IDENTIFIER ("=" expression)? ";"
+structExpr  → IDENTIFIER "{" (fieldInit ("," fieldInit)*)? "}"
+fieldInit   → IDENTIFIER ":" expression
 unionType   → type ("||" type)*
 parameter   → "inout"? type IDENTIFIER
 returnStmt  → "return" expression?
@@ -102,10 +108,10 @@ forStmt     → "for" "(" (declaration | assignment) ";" expression ";" assignme
 foreachStmt → "foreach" "(" type IDENTIFIER "in" expression ")" block
 block       → "{" statement* "}"
 declaration → "const"? unionType IDENTIFIER "=" expression
-assignment  → IDENTIFIER ("[" expression "]")* assignTail
+assignment  → IDENTIFIER ("[" expression "]" | "." IDENTIFIER)* assignTail
 assignTail  → "=" expression | "+=" expression | "-=" expression | "++" | "--"
 printStmt   → ("print" | "println") "(" expression ")"
-type        → basicType ("[" "]")*
+type        → (basicType | IDENTIFIER) ("[" "]")*
 basicType   → "int" | "float" | "bool" | "char" | "string"
 expression  → or
 or          → and ("||" and)*
@@ -115,33 +121,33 @@ comparison  → term (("<" | "<=" | ">" | ">=") term)*
 term        → factor (("+" | "-") factor)*
 factor      → unary (("*" | "/" | "%") unary)*
 unary       → ("!" | "-" | "+") unary | postfix
-postfix     → primary ("[" expression "]" | "." IDENTIFIER "(" arguments? ")"
+postfix     → primary ("[" expression "]" | "." IDENTIFIER | "." IDENTIFIER "(" arguments? ")"
                       | "." "cast" "(" type ")")*
 arguments   → expression ("," expression)*
 libraryCall → path "(" arguments? ")"
 conversion  → (path "::")? basicType "(" expression ")"
-typeCheck   → "type" IDENTIFIER ("==" | "!=") type
+typeCheck   → "type" IDENTIFIER ("." IDENTIFIER)* ("==" | "!=") type
 primary     → typeCheck | STRING | CHAR | "true" | "false" | NUMBER | IDENTIFIER
-            | libraryCall | callExpr | conversion | "(" expression ")" | "[" (expression ("," expression)*)? "]"
+            | structExpr | libraryCall | callExpr | conversion | "(" expression ")" | "[" (expression ("," expression)*)? "]"
 ```
 
 `→` significa «se compone de», `|` indica alternativas, `*` permite cero o más repeticiones y `?` indica una parte opcional. `STRING`, `CHAR` y los booleanos son variantes del token `Literal`; `NUMBER` corresponde al token `Number`. El `;` que separa las tres partes de un `for` no pertenece a `declaration` ni a `assignment`: la sentencia simple lo añade al final y `for_statement()` lo exige entre partes. `assignTail` reúne las cuatro modificaciones de una variable ya declarada: asignación, asignación compuesta e incremento/decremento. La flecha `->` es el token `Arrow`; introduce el tipo de retorno de una función y es opcional. `returnStmt` admite `return;` sin expresión, útil en funciones sin valor.
 
 La forma léxica de `NUMBER` es `dígitos ("." dígitos)? (("e" | "E") ("+" | "-")? dígitos)?`. Cada grupo de dígitos contiene al menos uno; el signo inicial se maneja en `unary()`.
 
-En el sufijo con punto, el identificador `cast` usa exclusivamente la alternativa que recibe un tipo; los demás métodos reciben expresiones. El comprobador restringe los destinos de Casting a tipos básicos y valida la ruta opcional como `std::Casting` o `Casting`. `path` sigue sirviendo sin cambios para las importaciones; `primary()` permite un tipo reservado al final de una ruta de conversión. Al inicio de una instrucción, un tipo seguido de `(` indica una conversión; en otro caso inicia una declaración.
+En el sufijo con punto, un nombre sin `(` produce acceso a campo. Si hay `(`, `cast` recibe un tipo y los métodos de biblioteca reciben expresiones. Esto permite que un campo se llame `cast` sin confundirse con una conversión. El comprobador restringe los destinos de Casting a tipos básicos y valida la ruta opcional como `std::Casting` o `Casting`. `path` sigue sirviendo sin cambios para las importaciones; `primary()` permite un tipo reservado al final de una ruta de conversión. Al inicio de una instrucción, un tipo seguido de `(` indica una conversión; en otro caso inicia una declaración.
 
 1. `parse()` recoge instrucciones hasta `Eof`.
-2. `statement()` distingue por el primer token las sentencias simples (declaración, modificación de variable, llamada, impresión), que exigen el `;` final, y las que terminan en `}` ( `if`, `while`, `for` y `foreach`), que no lo llevan. Ante un identificador, paréntesis o corchete analiza `postfix()`: si el nodo exterior es una llamada de biblioteca, una conversión o una llamada propia, lo envuelve en `Stmt::Call`; en otro caso vuelve al inicio para analizar la asignación. Este paso solo construye el árbol, sin ejecutar sus expresiones. `declaration()` consume el `const` opcional, delega el tipo en `union_type()` y recoge nombre e inicializador. `assignment()` recoge el nombre y los índices opcionales y, según el token siguiente, construye una asignación (`=`), una asignación compuesta (`+=`, `-=`) o un incremento/decremento (`++`, `--`); se separa de `statement()` para poder reutilizarla en la cabecera de un `for`. `array_type()` consume el tipo básico y envuelve cada par `[]` en `Type::Array`.
+2. `statement()` distingue por el primer token las sentencias simples (declaración, modificación de variable, llamada, impresión), que exigen el `;` final, y las que terminan en `}` (`struct`, `function`, `if`, `while`, `for` y `foreach`), que no lo llevan. Ante un identificador seguido de otro nombre (con posibles pares `[]` intermedios) o de `||`, `starts_named_declaration()` distingue una declaración con tipo nombrado. No necesita saber si el tipo existe; eso corresponde al comprobador. Para el resto de identificadores, paréntesis o corchetes analiza `postfix()`: si el nodo exterior es una llamada de biblioteca, una conversión o una llamada propia, lo envuelve en `Stmt::Call`; en otro caso vuelve al inicio para analizar la asignación. Este paso solo construye el árbol, sin ejecutar sus expresiones. `declaration()` consume el `const` opcional, delega el tipo en `union_type()` y recoge nombre e inicializador. `assignment()` recoge el nombre y una ruta opcional de campos e índices y, según el token siguiente, construye una asignación (`=`), una asignación compuesta (`+=`, `-=`) o un incremento/decremento (`++`, `--`); se separa de `statement()` para poder reutilizarla en la cabecera de un `for`. `array_type()` consume el tipo básico o nombrado y envuelve cada par `[]` en `Type::Array`.
 3. `if_statement()` consume `if`, exige la condición entre paréntesis y analiza un bloque. Si aparece `else`, analiza otro bloque o encadena un `if` anidado. `block()` recoge instrucciones hasta `}` y avisa si se alcanza el final del archivo.
-4. `while_statement()` consume `while`, exige la condición y un bloque. `for_statement()` exige `(`, analiza como inicialización una declaración o una modificación de variable, y a continuación la condición y la actualización separadas por `;`; la actualización admite asignación, asignación compuesta o incremento. `foreach_statement()` exige el tipo, el nombre, la palabra reservada `in`, el array y un bloque. `break` y `continue` se analizan como instrucciones simples y requieren `;`. Una declaración `function` se reconoce al inicio de `statement()` y no exige `;`; `function_declaration()` consume `function`, el nombre, la lista de parámetros `inout? tipo nombre` separados por comas, un `-> unionType` opcional y un bloque. `union_type()` recoge las alternativas separadas por el token existente `OrOr`, elimina duplicados y crea `Type::Union` cuando queda más de una; `array_type()` sigue atendiendo cada alternativa concreta y los tipos de parámetros, `foreach`, conversiones y comprobaciones `type`. `union_type()` también se usa en declaraciones de variables y constantes. `return_statement()` reconoce `return` seguido de una expresión o de `;`, y la sentencia simple añade el `;` final.
+4. `while_statement()` consume `while`, exige la condición y un bloque. `for_statement()` exige `(`, analiza como inicialización una declaración o una modificación de variable, y a continuación la condición y la actualización separadas por `;`; la actualización admite asignación, asignación compuesta o incremento. `foreach_statement()` exige el tipo, el nombre, la palabra reservada `in`, el array y un bloque. `break` y `continue` se analizan como instrucciones simples y requieren `;`. Una declaración `function` se reconoce al inicio de `statement()` y no exige `;`; `function_declaration()` consume `function`, el nombre, la lista de parámetros `inout? tipo nombre` separados por comas, un `-> unionType` opcional y un bloque. `union_type()` recoge las alternativas separadas por el token existente `OrOr`, elimina duplicados y crea `Type::Union` cuando queda más de una; `array_type()` sigue atendiendo cada alternativa concreta y los tipos de parámetros, `foreach`, conversiones y comprobaciones `type`. `union_type()` también se usa en declaraciones de variables, constantes y campos de estructuras. `return_statement()` reconoce `return` seguido de una expresión o de `;`, y la sentencia simple añade el `;` final.
 5. `name()` exige un identificador y conserva su texto y línea en `Name`.
 6. `print_statement()` exige los paréntesis alrededor de una expresión.
 7. `expression()` baja por niveles de precedencia: `or()`, `and()`, `equality()`, `comparison()`, `term()`, `factor()`, `unary()`, `postfix()` y `primary()`.
 8. Cada nivel binario usa `binary()` para encadenar sus operadores de izquierda a derecha. Cada operando se analiza en el siguiente nivel, que tiene mayor precedencia.
 9. `unary()` admite signos y negación lógica de forma recursiva. Si `-` precede directamente a un token `Number`, llama a `number(true, line)` y convierte juntos signo y dígitos para aceptar el mínimo de `i64`. Los demás unarios generan un nodo `Unary`. Después de convertir un número con signo, `finish_postfix()` consume posibles índices para que también se comprueben accesos inválidos como `-1[0]`.
-10. `postfix()` y `finish_postfix()` construyen un nodo `Index` por cada acceso y un `LibraryCall` por cada método con punto, salvo `cast`, que produce `Cast`. `index()` recoge la expresión del índice y la línea del corchete de apertura, y exige el cierre. La misma regla se usa al asignar elementos.
-11. `primary()` crea literales básicos, referencias, arrays (`Expr::Array`), llamadas de biblioteca por ruta (`Expr::LibraryCall`), conversiones (`Expr::Cast`) o analiza una expresión entre paréntesis. Un único identificador seguido de `(` produce `Expr::Call`, una llamada a una función propia; la ruta con `::` sigue produciendo `Expr::LibraryCall`. Sin paréntesis y con un solo nombre produce `Expr::Variable`. En un array recoge expresiones separadas por comas, sin coma final. `number()` convierte a `i64` o `f64`, rechazando enteros fuera de rango y float no finitos. Por ello `-9223372036854775808` es válido, pero `-(9223372036854775808)` se rechaza: el literal positivo interior ya está fuera de rango.
+10. `postfix()` y `finish_postfix()` construyen un nodo `Index` por cada acceso y un `Field` por cada nombre tras el punto sin paréntesis, y un `LibraryCall` por cada método con punto, salvo `cast`, que produce `Cast`. `index()` recoge la expresión del índice y la línea del corchete de apertura, y exige el cierre. La misma regla se usa al asignar elementos.
+11. `primary()` crea literales básicos, referencias, arrays (`Expr::Array`), llamadas de biblioteca por ruta (`Expr::LibraryCall`), conversiones (`Expr::Cast`) o analiza una expresión entre paréntesis. Un único identificador seguido de `(` produce `Expr::Call`, una llamada a una función propia; la ruta con `::` sigue produciendo `Expr::LibraryCall`. Un único identificador seguido de `{` llama a `struct_literal()` y produce `Expr::Struct` con pares de nombre y expresión en el orden escrito, sin coma final. Sin paréntesis ni llave y con un solo nombre produce `Expr::Variable`. `struct_declaration()` recoge el nombre del tipo y cada `FieldDef`: nombre, tipo concreto o unión, marca `const` opcional y expresión de valor por defecto opcional. No ejecuta ni construye valores. Reutiliza los tokens `Const`, `OrOr` y `Equal`. En un array recoge expresiones separadas por comas, sin coma final. `number()` convierte a `i64` o `f64`, rechazando enteros fuera de rango y float no finitos. Por ello `-9223372036854775808` es válido, pero `-(9223372036854775808)` se rechaza: el literal positivo interior ya está fuera de rango.
 
 `peek()` consulta el token actual y `consume()` exige un token concreto y avanza. El análisis es **descendente**: empieza en el programa y baja hacia sus componentes. Los paréntesis cambian la agrupación del árbol sin necesitar un nodo propio.
 
@@ -153,10 +159,12 @@ El parser acepta la estructura de `float precio = 25;`: las piezas están bien c
 
 ```text
 Expr
+├── Struct { name: Name, fields: Vec<(Name, Expr)> }
+├── Field { object: Box<Expr>, name: Name }
 ├── LibraryCall { path: Vec<Name>, receiver: Option<Box<Expr>>, arguments: Vec<Expr> }
 ├── Call { name: Name, arguments: Vec<CallArgument> }
 ├── Cast { path: Vec<Name>, target: Type, value: Box<Expr> }
-├── TypeCheck { name: Name, target: Type, negated: bool }
+├── TypeCheck { name: Name, fields: Vec<Name>, target: Type, negated: bool }
 ├── Literal(Value)
 ├── Variable(Name)
 ├── Array { elements: Vec<Expr>, line, element_type: RefCell<Option<Type>> }
@@ -165,14 +173,15 @@ Expr
 └── Binary { left: Box<Expr>, operator: BinaryOp, right: Box<Expr>, line }
 
 Stmt
+├── Struct { name: Name, fields: Vec<FieldDef> }
 ├── Call(Expr)
 ├── Function { name: Name, parameters: Vec<Parameter>, return_type: Option<Type>, body: Vec<Stmt>, line }
 ├── Return { value: Option<Expr>, line }
 ├── Import { path: Vec<Name>, is_use: bool, line }
 ├── Declare { declared_type, is_constant, name, initializer }
-├── Assign { name, indices: Vec<(Expr, línea)>, value }
-├── CompoundAssign { name, indices, operator: AssignOp, value, line }
-├── Increment { name, indices, operator: IncrementOp, line }
+├── Assign { name, steps: Vec<TargetStep>, value }
+├── CompoundAssign { name, steps, operator: AssignOp, value, line }
+├── Increment { name, steps, operator: IncrementOp, line }
 ├── If { condition, then_branch: Vec<Stmt>, else_branch: Option<Vec<Stmt>>, line }
 ├── While { condition, body: Vec<Stmt>, line }
 ├── For { initializer: Box<Stmt>, condition, update: Box<Stmt>, body: Vec<Stmt>, line }
@@ -180,6 +189,10 @@ Stmt
 ├── Print(Expr)
 └── Println(Expr)
 ```
+
+`FieldDef` conserva `name`, `declared_type`, `is_constant` y `default_value: Option<Expr>`. Guardar la expresión permite evaluarla para cada instancia, en vez de compartir un valor calculado al declarar el tipo. `Expr::TypeCheck` guarda una variable raíz y una cadena de nombres de campo; no admite índices ni llamadas. `Expr::field_path()` reconoce esas mismas rutas estables para los refinamientos.
+
+`TargetStep` distingue `Index(Expr, línea)` de `Field(Name)`. Las modificaciones guardan esta ruta sobre una variable raíz. `Expr::into_target()` extrae la misma ruta de una lectura para que `push` y `pop` también puedan modificar arrays dentro de campos.
 
 `Parameter` conserva `declared_type`, `name` e `is_inout`. `CallArgument` distingue `Value(Expr)` de `InOut(Name)`. `user_arguments()` reconoce la marca solo en llamadas propias y exige un nombre completo sin índices ni operaciones. La lista de biblioteca sigue usando `arguments()` y `Vec<Expr>`.
 
@@ -198,7 +211,7 @@ Vec<Stmt>
     └── Variable(Name("edad", línea 2))
 ```
 
-[value.rs](../src/value.rs) distingue `Type`, que identifica un tipo básico, `Array(Box<Type>)` o `Union(Vec<Type>)`, de `Value`, que además contiene el dato: `Int(i64)`, `Float(f64)`, `Bool(bool)`, `Char(char)`, `String(String)` o `Array { elements: Vec<Value>, element_type: Type }`. `Type::Array` conserva el tipo de elemento; la longitud no forma parte del tipo. `Type` usa `Clone` en lugar de `Copy` porque puede contener otro tipo mediante `Box`.
+[value.rs](../src/value.rs) distingue `Type`, que identifica un tipo básico, `Struct(String)` (el nombre), `Array(Box<Type>)` o `Union(Vec<Type>)`, de `Value`, que además contiene el dato: `Int(i64)`, `Float(f64)`, `Bool(bool)`, `Char(char)`, `String(String)`, `Struct { name: String, fields: Vec<(String, Value)> }` o `Array { elements: Vec<Value>, element_type: Type }`. `Type::Array` conserva el tipo de elemento; la longitud no forma parte del tipo. `Type` usa `Clone` en lugar de `Copy` porque puede contener otro tipo mediante `Box`.
 
 `value_type()` devuelve `Type`: todo valor conserva un tipo concreto, incluidos los arrays vacíos. Para arrays usa `element_type`, no deduce el tipo mirando su primer elemento. El comprobador calcula el tipo de cada `Expr::Array` y lo guarda en su campo `element_type: RefCell<Option<Type>>`. `RefCell` permite completar ese dato durante el análisis sin cambiar las referencias compartidas al resto del árbol; el parser deja `None` y el intérprete solo recibe arrays ya comprobados con `Some(tipo)`. Si el comprobador prueba varias alternativas de una unión, vuelve a comprobar la alternativa elegida para fijar también las anotaciones de los arrays interiores. Al ejecutar, el literal construye `Value::Array` con sus elementos y ese tipo concreto. Copias, argumentos, retornos y operaciones conservan la información.
 
@@ -208,14 +221,18 @@ El parser copia el contenido de los tokens al árbol. Para evaluar un literal, e
 
 ## 5. Comprobación de tipos antes de ejecutar
 
-[type_checker.rs](../src/type_checker.rs) introduce `TypeChecker` y una pila de ámbitos `Vec<HashMap<String, VariableInfo>>`. Un **entorno** relaciona nombres con información; en esta etapa cada `VariableInfo` contiene `declared_type` (el tipo declarado), `narrowed_type` (un tipo más concreto conocido por una condición, o `None`) e `is_constant` (si se prohíbe reasignar), sin guardar valores. El último mapa de la pila es el ámbito actual; `lookup()` busca desde el más interno hacia fuera. Además guarda `functions: HashMap<String, FunctionSignature>`; una **firma** conserva el tipo y la marca `inout` de cada parámetro (`Vec<(Type, bool)>`) y, si la función devuelve un valor, su tipo de retorno (`return_type: Option<Type>`). También guarda `return_types`, una pila que indica el tipo esperado dentro de un `return`; estar vacía significa que se está fuera de cualquier función. Ambos estados se reinician al empezar cada archivo.
+[type_checker.rs](../src/type_checker.rs) introduce `TypeChecker` y una pila de ámbitos `Vec<HashMap<String, VariableInfo>>`. Un **entorno** relaciona nombres con información; en esta etapa cada `VariableInfo` contiene `declared_type` (el tipo declarado), `narrowed_type` (el tipo más concreto de la variable conocido por una condición, o `None`), `narrowed_fields` (tipos conocidos por rutas de campos), `is_constant` (si se prohíbe modificar) e `is_inout` (si el parámetro puede compartir almacenamiento con otros alias), sin guardar valores. El último mapa de la pila es el ámbito actual; `lookup()` busca desde el más interno hacia fuera. Además guarda `functions: HashMap<String, FunctionSignature>`; una **firma** conserva el tipo y la marca `inout` de cada parámetro (`Vec<(Type, bool)>`) y, si la función devuelve un valor, su tipo de retorno (`return_type: Option<Type>`). También guarda `return_types`, una pila que indica el tipo esperado dentro de un `return`; estar vacía significa que se está fuera de cualquier función. También conserva `structures: HashMap<String, Vec<FieldDef>>`, que relaciona cada tipo nombrado con los campos en el orden de declaración. Estos registros se reinician al empezar cada archivo.
+
+`validate_type()` comprueba los nombres de estructuras dentro de anotaciones, arrays y uniones. Al declarar una estructura, se registra su nombre antes de validar los campos: así puede nombrarse a sí misma, además de usar tipos anteriores. `has_finite_alternative()` rechaza un campo que solo pueda contener la propia estructura: un array puede terminar vacío y una unión puede terminar en una alternativa no recursiva. No se admiten tipos adelantados ni recursión mutua. `field_definition()` exige un tipo estructura concreto y busca el campo en el registro; `field_type()` obtiene su tipo declarado.
+
+Los valores por defecto se comprueban al declarar el tipo. Se prepara un contexto con globales y campos anteriores de solo lectura; se ocultan todos los nombres de campo del mapa global para que un campo posterior no se resuelva por accidente como un global homónimo. No se heredan refinamientos globales de una condición anterior. Las funciones y bibliotecas deben estar disponibles en ese punto. El tipo del campo sirve de contexto a su expresión, incluidos arrays vacíos y uniones. Se anotan los arrays en el AST original, que después usará el intérprete. Pasar un campo anterior o un global como `inout`, o usar `push`/`pop` sobre ellos, se rechaza; una función por valor puede operar con su copia.
 
 `check()` abre el ámbito global y recorre las instrucciones en orden:
 
 - En una declaración, rechaza nombres repetidos, obtiene el tipo del inicializador usando el tipo declarado como contexto y exige que todos sus tipos posibles estén incluidos en el declarado mediante `Type::accepts()`. Solo entonces registra el nombre junto con su tipo y la marca `is_constant`. Así `int x = x;` falla: `x` todavía no está disponible. En el ámbito global también rechaza un nombre que coincida con una función ya declarada.
 - En una declaración `function`, exige el ámbito global (`scopes.len()` debe ser 1), rechaza un nombre de función repetido o que coincida con una variable global, y rechaza parámetros con el mismo nombre. Registra la firma, con su tipo de retorno, antes de comprobar el cuerpo, de modo que la función puede llamarse a sí misma. Después abre un ámbito, registra cada parámetro como variable no constante, apila el tipo de retorno en `return_types` y comprueba el cuerpo. Al terminar, si la función declara `-> tipo` exige que `always_returns()` garantice un `return` con valor en todos los caminos; el análisis es conservador y solo acepta un `return` directo o un `if`/`else` con ambas ramas devolviendo. Al cerrar el ámbito, los parámetros dejan de existir.
 - En un `return`, comprueba que la pila `return_types` no esté vacía; si no, el error indica que solo se permite dentro de una función. Con tipo de retorno declarado, exige una expresión compatible mediante `Type::accepts()`: un tipo concreto debe coincidir exactamente y una unión debe incluir todos los tipos posibles de la expresión; sin él, exige `return;` sin expresión. En una llamada `Expr::Call`, exige un nombre declarado antes, el número exacto de argumentos y tipos idénticos, sin conversiones. También exige que las marcas `inout` coincidan: para `InOut(Name)` valida el destino con `assignment_target()`, y para `Value(Expr)` comprueba la expresión con el tipo esperado. `check_call()` devuelve `Some(tipo)` si la función devuelve un valor y `None` si no; por eso una llamada sin valor solo vale como instrucción y una función declarada más adelante no está disponible.
-- En una asignación, busca la información del nombre y rechaza la operación si `is_constant` es `true`, incluso si el valor no cambiaría. Dentro de una función también rechaza destinos globales: si `return_types` no está vacío, el nombre debe encontrarse en algún ámbito posterior al global. Esta regla se aplica también al paso de argumentos `inout` y a los métodos de modificación de arrays. Para las demás variables, resuelve el tipo del destino: sin índices es el declarado; cada índice exige un array y un `int`, y desciende al tipo de elemento. Compara ese tipo con el de la expresión asignada y lo proporciona como contexto para arrays vacíos. No cambia la anotación declarada ni declara variables nuevas. Una asignación completa descarta `narrowed_type`; para índices se usa el tipo refinado del array. Las asignaciones compuestas y los incrementos usan el tipo refinado y lo conservan. `assignment_target()` reúne la búsqueda, el rechazo de constantes y el recorrido de índices; lo comparten la asignación, la compuesta y el incremento.
+- En una asignación, busca la información del nombre y rechaza la operación si `is_constant` es `true`, incluso si el valor no cambiaría. Dentro de una función también rechaza destinos globales: si `return_types` no está vacío, el nombre debe encontrarse en algún ámbito posterior al global. Esta regla se aplica también al paso de argumentos `inout` y a los métodos de modificación de arrays. Para las demás variables, resuelve el tipo del destino: sin campos ni índices es el declarado; cada campo comprueba su marca `const` y cada índice exige un array y un `int`, y desciende al tipo de elemento. La asignación simple usa el tipo declarado del último campo para permitir cambiar la alternativa de una unión; los accesos intermedios usan los tipos refinados. Compara ese tipo con el de la expresión asignada y lo proporciona como contexto para arrays vacíos. No cambia la anotación declarada ni declara variables nuevas. Una asignación completa descarta los refinamientos de la raíz y sus campos; reemplazar un campo descarta su ruta y las rutas interiores. Los accesos intermedios requieren un tipo concreto comprobado. Las asignaciones compuestas y los incrementos usan el tipo refinado y lo conservan. `assignment_target()` reúne la búsqueda, el rechazo de constantes y el recorrido de campos e índices; lo comparten la asignación, la compuesta y el incremento.
 - En una asignación compuesta (`+=`, `-=`), obtiene el tipo del destino como en una asignación y el de la derecha, y aplica las reglas de `+` o `-` mediante `binary_result()`. El destino debe admitir la operación con el tipo de la derecha: `+=` vale para `int`, `float` y `string`, y `-=` para `int` y `float`. El error señala la línea del operador.
 - En un incremento o decremento (`++`, `--`), el destino debe ser `int` o `float`; no hay operando derecho que comprobar. El paso de una unidad se decide al ejecutar a partir del tipo del destino.
 - En una impresión, comprueba que la expresión sea válida; una referencia debe existir previamente.
@@ -226,7 +243,7 @@ El parser copia el contenido de los tokens al árbol. Para evaluar un literal, e
 
 El mensaje de condición incorrecta lo produce `require_bool()`, compartido por `if`, `while` y `for`, e indica la línea del bucle.
 
-Para `int edad = 25;`, `expression_type()` obtiene `Int` del literal. Coincide con la anotación y se guarda `edad → VariableInfo { declared_type: Int, narrowed_type: None, is_constant: false }`. Cuando llega `println(edad);`, la consulta obtiene `Int` del campo `declared_type`.
+Para `int edad = 25;`, `expression_type()` obtiene `Int` del literal. Coincide con la anotación y se guarda `edad → VariableInfo { declared_type: Int, narrowed_type: None, narrowed_fields: {}, is_constant: false, is_inout: false }`. Cuando llega `println(edad);`, la consulta obtiene `Int` del campo `declared_type`.
 
 Si escribimos este programa **inválido**:
 
@@ -248,13 +265,13 @@ El tipo explícito obligatorio, la compatibilidad sin conversiones implícitas y
 
 `indexed_type()` exige `Type::Array` en el objeto y `Type::Int` en el índice, tanto para `Expr::Index` como para cada índice de `Stmt::Assign`. Devuelve el tipo del elemento. No comprueba límites aquí: la longitud y el índice son valores de ejecución. La marca `is_constant` se comprueba antes de recorrer los índices y protege todo el valor, incluidos arrays interiores.
 
-En `Unary` y `Binary`, `expression_type()` comprueba recursivamente los operandos y aplica las reglas de cada operador. Exige igualdad de tipos entre ambos operandos; aritmética conserva el tipo numérico, concatenación produce `String`, y comparaciones y lógica producen `Bool`. La igualdad y desigualdad admiten arrays del mismo tipo; las demás operaciones no admiten arrays completos. Comprueba ambos lados de `&&` y `||` aunque después pueda omitirse uno. Así `true || desconocida` y `false && 1` fallan antes de emitir salida. Las reglas comunes viven en `binary_result()`, que devuelve `None` cuando los operandos no comparten tipo o el operador no los admite; la asignación compuesta la reutiliza con `+` o `-`.
+En `Unary` y `Binary`, `expression_type()` comprueba recursivamente los operandos y aplica las reglas de cada operador. Exige igualdad de tipos entre ambos operandos; aritmética conserva el tipo numérico, concatenación produce `String`, y comparaciones y lógica producen `Bool`. La igualdad y desigualdad admiten arrays o estructuras del mismo tipo; las demás operaciones no admiten estos valores completos. Comprueba ambos lados de `&&` y `||` aunque después pueda omitirse uno. Así `true || desconocida` y `false && 1` fallan antes de emitir salida. Las reglas comunes viven en `binary_result()`, que devuelve `None` cuando los operandos no comparten tipo o el operador no los admite; la asignación compuesta la reutiliza con `+` o `-`.
 
 ## 6. Intérprete y entorno de valores
 
-[interpreter.rs](../src/interpreter.rs) contiene `Interpreter<W: Write>`. Recibe un programa validado y guarda otro entorno: ahora una pila de ámbitos `Vec<HashMap<String, Binding>>`, porque los bloques de un `if`, los bucles y las llamadas a funciones pueden anidarse. El primer mapa es el ámbito global. También guarda `functions`, un mapa del nombre de cada función propia a su cuerpo ya resuelto (compartido con `Rc` para no duplicar las instrucciones en cada llamada), y `call_bases`, una pila con el índice donde comienza cada llamada. Su longitud limita las llamadas anidadas. `Binding::Owned(Value)` guarda un valor propio; `Binding::Alias { scope, name }` apunta al almacenamiento original de un parámetro `inout`. El alias no es un `Value`: no puede devolverse ni guardarse dentro de un array. Un `return` se representa con la señal `Control::Return`, que recorre bloques y bucles hasta la llamada más cercana.
+[interpreter.rs](../src/interpreter.rs) contiene `Interpreter<W: Write>`. Recibe un programa validado y guarda otro entorno: ahora una pila de ámbitos `Vec<HashMap<String, Binding>>`, porque los bloques de un `if`, los bucles y las llamadas a funciones pueden anidarse. El primer mapa es el ámbito global. También guarda `functions`, un mapa del nombre de cada función propia a su cuerpo ya resuelto (compartido con `Rc` para no duplicar las instrucciones en cada llamada), `structures`, un mapa del nombre de cada estructura a sus definiciones de campo en orden (`Rc<Vec<FieldDef>>`), y `call_bases`, una pila con el índice donde comienza cada llamada o ámbito de valores por defecto. Los contadores separados `function_depth` y `construction_depth` limitan conjuntamente a 100 las llamadas y construcciones simultáneas. `Binding::Owned(Value)` guarda un valor propio; `Binding::Alias { scope, name }` apunta al almacenamiento original de un parámetro `inout`. El alias no es un `Value`: no puede devolverse ni guardarse dentro de un array. Un `return` se representa con la señal `Control::Return`, que recorre bloques y bucles hasta la llamada más cercana.
 
-`interpret()` llama a `execute()` para cada instrucción. Una declaración evalúa el inicializador y guarda el resultado en el ámbito actual (el último de la pila). Una asignación busca el ámbito que contiene el nombre, resuelve primero el destino y comprueba todos sus índices de izquierda a derecha; después evalúa el nuevo valor y sustituye el anterior. Si falla un índice o la expresión asignada, no modifica el destino. `resolve_target()` devuelve el ámbito y las posiciones ya validadas, y `write_target()` escribe en ellas; entre ambos, `target_value()` obtiene una copia del valor actual. Una asignación compuesta evalúa la derecha, aplica `binary()` con el operando actual y escribe el resultado; un incremento usa `1` o `1.0` como paso según el tipo del destino. Si la operación desborda, no se escribe nada. `evaluate()` devuelve una copia del literal o del valor consultado; esto también copia el contenido de las cadenas y de todos los arrays anidados, y evita que dos variables compartan cambios. Para consultar una variable, `scope_containing()` busca desde el bloque actual hasta el inicio de la llamada y después en el global. Los ámbitos del llamador quedan fuera de esa búsqueda, aunque sigan vivos en la pila. Un nombre local oculta al global; `storage_location()` sigue los alias para leer o escribir en el almacenamiento original. Los parámetros normales y los valores devueltos siguen siendo copias independientes.
+`interpret()` llama a `execute()` para cada instrucción. Una declaración evalúa el inicializador y guarda el resultado en el ámbito actual (el último de la pila). Una asignación busca el ámbito que contiene el nombre, resuelve primero el destino y comprueba todos sus índices de izquierda a derecha; después evalúa el nuevo valor y sustituye el anterior. Si falla un índice o la expresión asignada, no modifica el destino. `resolve_target()` devuelve el ámbito y las posiciones ya validadas, y `write_target()` escribe en ellas; entre ambos, `target_value()` obtiene una copia del valor actual. Una asignación compuesta evalúa la derecha, aplica `binary()` con el operando actual y escribe el resultado; un incremento usa `1` o `1.0` como paso según el tipo del destino. Si la operación desborda, no se escribe nada. `evaluate()` devuelve una copia del literal o del valor consultado; esto también copia el contenido de las cadenas, de los campos de estructuras y de todos los arrays anidados, y evita que dos variables compartan cambios. Para consultar una variable, `scope_containing()` busca desde el bloque actual hasta el inicio de la llamada y después en el global. Los ámbitos del llamador quedan fuera de esa búsqueda, aunque sigan vivos en la pila. Un nombre local oculta al global; `storage_location()` sigue los alias para leer o escribir en el almacenamiento original. Los parámetros normales y los valores devueltos siguen siendo copias independientes.
 
 Un `Stmt::If` evalúa su condición y, según sea `true` o `false`, ejecuta el bloque `then` o el `else`. `execute_block()` abre un ámbito con `push`, ejecuta sus instrucciones y lo cierra con `pop`; si una instrucción falla, el error se propaga y el programa se detiene. Como el comprobador ya garantizó que las condiciones son `bool`, el intérprete no repite esa comprobación de tipos.
 
@@ -273,9 +290,92 @@ println(edad);
 
 El entorno se actualiza a `edad → Value::Int(26)` y se imprime `26` en otra línea. El entorno de tipos sigue indicando `Int`.
 
-`Value` implementa `Display`, la capacidad de formatear un dato en Rust. Cadenas y caracteres se escriben sin comillas, booleanos como `true` o `false`, enteros en decimal y float mediante el formato que mantiene `1.0` distinguible de `1`. Los arrays se formatean entre corchetes y sus elementos se separan por comas. Las cadenas y caracteres interiores se rodean de comillas conservando su contenido sin escapes, por lo que no se garantiza que esta salida sea código reutilizable. El formateo para imprimir no convierte el tipo de una variable.
+`Value` implementa `Display`, la capacidad de formatear un dato en Rust. Cadenas y caracteres se escriben sin comillas, booleanos como `true` o `false`, enteros en decimal y float mediante el formato que mantiene `1.0` distinguible de `1`. Las estructuras se formatean como `Nombre { campo: valor, ... }` en orden de declaración. Los arrays se formatean entre corchetes y sus elementos se separan por comas. Las cadenas y caracteres interiores se rodean de comillas conservando su contenido sin escapes, por lo que no se garantiza que esta salida sea código reutilizable. El formateo para imprimir no convierte el tipo de una variable.
 
 `write!` implementa `print` y `writeln!` implementa `println`. El destino genérico `W: Write` permite usar tanto la salida estándar como un `Vec<u8>` en las pruebas. No se vuelve a analizar texto al ejecutar.
+
+### Recorrido de una estructura
+
+Con esta entrada:
+
+```oki
+struct Persona { string nombre; int edad; }
+Persona ana = Persona { edad: 30, nombre: "Ana" };
+Persona copia = ana;
+copia.edad++;
+println(ana);
+println(copia.edad);
+```
+
+El scanner añade `Struct` y reconoce `Colon` para cada `:`. El nombre `Persona` sigue siendo un identificador: el scanner no decide si un nombre representa un tipo o una variable. El parser construye:
+
+```text
+Struct(Persona, [FieldDef(nombre, String, no constante, sin defecto),
+                 FieldDef(edad, Int, no constante, sin defecto)])
+Declare(ana, Struct("Persona"),
+        Struct(Persona, [(edad, Literal(Int(30))), (nombre, Literal(String("Ana")))]))
+Declare(copia, Struct("Persona"), Variable(ana))
+Increment(copia, steps: [Field(edad)], Increment)
+Println(Variable(ana))
+Println(Field(Variable(copia), edad))
+```
+
+El comprobador registra los dos `FieldDef` de `Persona`, valida la anotación `Struct("Persona")` y comprueba que el literal contiene ambos campos una vez y con su tipo exacto. El nombre define la identidad del tipo; otra estructura con los mismos campos sigue siendo distinta. El campo array recibe su tipo declarado como contexto, igual que una variable array, lo que permite `struct Caja { int[] datos; }` y `Caja { datos: [] }`.
+
+El intérprete registra el orden de campos al ejecutar `Stmt::Struct`. Al evaluar la construcción, obtiene primero `30` y luego `"Ana"`, según el orden escrito. Reordena los valores ya evaluados según la declaración y guarda `Value::Struct { name: "Persona", fields: [("nombre", String("Ana")), ("edad", Int(30))] }`. Esta representación hace que impresión e igualdad no dependan del orden de construcción. La copia de `ana` clona todo el valor. `resolve_target()` convierte `[Field(edad)]` en una ruta evaluada con `TargetPosition::Field { name: "edad", structure: "Persona" }`; `target_value()` lee `30`, el incremento calcula `31` y `target_mut()` encuentra el campo que `write_target()` sustituye. `ana` mantiene `30`. Se imprime `Persona { nombre: "Ana", edad: 30 }` y después `31`.
+
+En `grupo.personas[0].edad` la ruta combina `Field(personas)`, `Index(Int(0), línea)` y `Field(edad)`. Los índices se evalúan una sola vez, en orden, antes del valor de la derecha. Cada posición guarda también el tipo del elemento array o el nombre nominal de la estructura. Se vuelve a recorrer la ruta al leer o escribir, comprobando límites y tipos: un `pop` interior puede eliminar una posición y una llamada `inout` puede reemplazar una alternativa unión. En este último caso se rechaza escribir en un destino que haya cambiado de tipo, aunque la nueva estructura tenga un campo con el mismo nombre. `push` y `pop` conservan y vuelven a comprobar el tipo del array destino. `assignment_target()` protege la variable raíz frente a `const` y la escritura directa de globales en funciones. Esta protección se aplica a toda la ruta y también a `push`/`pop` sobre un campo array. Se comprueba además la marca `const` de cada campo atravesado, para proteger todo su contenido.
+
+Las funciones usan `Struct("Persona")` como cualquier tipo concreto en sus firmas; los parámetros normales y retornos copian el valor, mientras que `inout` mantiene el alias de la variable completa. `type dato == Persona` compara `value_type()` con el tipo nombrado y reutiliza los refinamientos de variables unión. Casting excluye `Struct` explícitamente, para que las reglas generales de conversión a texto no lo acepten por accidente. Todos los campos son públicos. No se incorporan métodos propios ni referencias compartidas; la recursión usa valores finitos independientes.
+
+### Campos constantes, valores por defecto y uniones
+
+Esta entrada combina las tres ampliaciones:
+
+```oki
+struct Registro {
+    const int id;
+    int doble = id * 2;
+    int || string valor = 0;
+}
+Registro dato = Registro { id: 3 };
+println(dato.doble);
+if (type dato.valor == int) {
+    dato.valor++;
+    println(dato.valor);
+}
+dato.valor = "listo";
+if (type dato.valor == string) {
+    println(dato.valor + "!");
+}
+```
+
+El parser guarda tres `FieldDef`: `id` es constante y no tiene defecto; `doble` tiene la expresión `Binary(Multiply, Variable(id), Literal(Int(2)))`; `valor` tiene el tipo `Union([Int, String])` y el defecto `Literal(Int(0))`. El literal de construcción solo contiene el par explícito `(id, Literal(Int(3)))`. El comprobador permite omitir `doble` y `valor`, valida sus expresiones con los campos anteriores disponibles y rechaza cualquier escritura posterior que atraviese `id`.
+
+Al ejecutar, `construct()` evalúa primero todos los campos explícitos una sola vez, en el orden escrito y en el contexto del llamador. Después abre un ámbito aislado para recorrer la definición en orden. Guarda `id → Int(3)` como copia de lectura para los siguientes valores por defecto; obtiene `doble → Int(6)` y `valor → Int(0)`. El resultado es `Value::Struct { name: "Registro", fields: [("id", Int(3)), ("doble", Int(6)), ("valor", Int(0))] }`. Cada instancia vuelve a calcular los defectos omitidos; un campo proporcionado evita evaluar su defecto. Estos ámbitos y sus entradas de `call_bases` se cierran también ante errores. Las globales se leen con su valor actual; las variables locales del llamador quedan ocultas.
+
+La condición guarda `TypeCheck { name: dato, fields: [valor], target: Int, negated: false }`. `assume_condition()` añade la ruta `["valor"] → Int` a `narrowed_fields`; `path_type()` la consulta al comprobar el incremento. La asignación simple posterior usa el tipo declarado `int || string` y borra lo sabido de esa ruta. La nueva comprobación permite concatenar texto. El intérprete recorre el valor concreto del campo al evaluar cada condición. Se imprime `6`, `1` y `listo!`, cada uno en su línea.
+
+Los refinamientos siguen rutas de nombres sin índices. Reemplazar un campo descarta lo conocido de él y de sus campos interiores; reemplazar la raíz descarta todas sus rutas. `forget_expression_effects()` recorre las llamadas y elimina información de campos cuando se pasa su raíz como `inout`. Si esa raíz ya es un parámetro `inout`, también elimina información de otros parámetros `inout` y globales, porque pueden ser alias del mismo almacenamiento. Al comprobar los operandos, argumentos, índices y campos explícitos, se consideran los efectos anteriores en el orden de evaluación. Por ejemplo, una prueba sobre `dato.valor` deja de servir tras una llamada que recibe `inout dato`, aunque la función concreta no modifique ese campo.
+
+Las ramas conservan solo las rutas conocidas en ambos caminos y reúnen sus posibles tipos; los bucles descartan antes de comprobar su cuerpo los hechos que sus escrituras o llamadas puedan invalidar. Las funciones comprueban su cuerpo sin heredar refinamientos globales del punto de declaración. Son decisiones conservadoras: puede ser necesario repetir una comprobación de tipo. No se añade análisis de índices ni de lo que hace cada función.
+
+### Recorrido de una estructura recursiva
+
+```oki
+struct Nodo { int valor; Nodo[] hijos = []; }
+Nodo raiz = Nodo { valor: 1, hijos: [Nodo { valor: 2 }] };
+Nodo copia = raiz;
+copia.hijos[0].valor = 9;
+println(raiz.hijos[0].valor);
+println(copia.hijos[0].valor);
+```
+
+El comprobador registra `Nodo` antes de validar `Array(Struct("Nodo"))`. El array vacío permite terminar: el nodo interior omite `hijos` y recibe un array vacío cuyo tipo de elemento es `Struct("Nodo")`. `Type::Struct` guarda solo el nombre; no expande una definición dentro de sí misma. El valor sí guarda un árbol finito de estructuras y arrays. La copia clona ese árbol; la salida es `2` y `9`. Una cadena puede terminar con una unión, por ejemplo `struct Enlace { int valor; Enlace || bool siguiente = false; }`. Un campo `Nodo siguiente;` sin alternativa finita se rechaza antes de ejecutar.
+
+La suma de llamadas y construcciones simultáneas tiene un límite de 100. Incluye tanto los inicializadores explícitos como los valores por defecto: un defecto que se construya a sí mismo sin terminar acaba en un error del lenguaje. Además, `Value::check_depth()` recorre el contenido mediante una pila de trabajo, sin recursión en Rust, y limita a 100 sus niveles combinados de estructuras y arrays. Se aplica a cada construcción, literal array, escritura y elemento añadido con `push`; las dos últimas operaciones cuentan también los contenedores de la ruta destino antes de modificarla. Esto impide que un bucle produzca valores cada vez más profundos y desborde después la pila al copiarlos, imprimirlos o destruirlos. Son límites distintos: un valor puede crecer sin llamadas anidadas.
+
+El ejemplo [estructuras_campos.oki](../examples/estructuras_campos.oki) reúne estas ampliaciones, un árbol y una cadena finita.
 
 ### Recorrido de un array
 
@@ -397,7 +497,7 @@ Un error de conversión usa la línea del último `Name` de la ruta, incluido `c
 
 ### Recorrido de una constante
 
-Con `const int limite = 2 * 5; println(limite);`, el scanner añade `Const` antes de `Type(Int)`. El parser construye `Declare { declared_type: Int, is_constant: true, name: limite, initializer: Binary(Multiply, Literal(Int(2)), Literal(Int(5))) }`, seguido de `Println(Variable(limite))`. El comprobador registra `limite → VariableInfo { declared_type: Int, is_constant: true }`.
+Con `const int limite = 2 * 5; println(limite);`, el scanner añade `Const` antes de `Type(Int)`. El parser construye `Declare { declared_type: Int, is_constant: true, name: limite, initializer: Binary(Multiply, Literal(Int(2)), Literal(Int(5))) }`, seguido de `Println(Variable(limite))`. El comprobador registra `limite → VariableInfo { declared_type: Int, narrowed_type: None, narrowed_fields: {}, is_constant: true, is_inout: false }`.
 
 El intérprete evalúa el inicializador una sola vez, guarda `limite → Value::Int(10)` e imprime `10` con salto final. La prohibición de reasignar pertenece al comprobador: el intérprete recibe el árbol validado y su tabla de valores no necesita duplicar esa marca. Si se añade `limite = 20;` en la línea 3, la comprobación falla con `Línea 3: No se puede reasignar la constante 'limite'.` y no llega a ejecutarse ninguna instrucción, incluida la impresión anterior.
 
@@ -416,7 +516,7 @@ Println
 └── Variable(total)
 ```
 
-El comprobador obtiene `Int` para la multiplicación y para la suma, y registra `total → VariableInfo { declared_type: Int, narrowed_type: None, is_constant: false }`. `evaluate()` evalúa los operandos de izquierda a derecha y llama a `binary()` para la operación: primero obtiene `3 * 4 = 12`, después `2 + 12 = 14`. Guarda `total → Int(14)` y la impresión produce `14` con salto final. Con `(2 + 3) * 4`, la suma queda como hijo izquierdo de la multiplicación y el resultado es `20`.
+El comprobador obtiene `Int` para la multiplicación y para la suma, y registra `total → VariableInfo { declared_type: Int, narrowed_type: None, narrowed_fields: {}, is_constant: false, is_inout: false }`. `evaluate()` evalúa los operandos de izquierda a derecha y llama a `binary()` para la operación: primero obtiene `3 * 4 = 12`, después `2 + 12 = 14`. Guarda `total → Int(14)` y la impresión produce `14` con salto final. Con `(2 + 3) * 4`, la suma queda como hijo izquierdo de la multiplicación y el resultado es `20`.
 
 `evaluate()` también aplica los unarios. Para `&&` y `||`, evalúa la izquierda primero y devuelve inmediatamente `false` o `true`, respectivamente, si ya determina el resultado. Solo en los demás casos evalúa la derecha. Esto hace que `false && 1 / 0 == 0` sea válido y produzca `false` sin división por cero.
 
@@ -550,13 +650,13 @@ if (type resultado == int) {
 }
 ```
 
-El scanner reconoce `type` como `TypeOf`. El parser construye `Declare(resultado, Union([Int, String]), Literal(Int(5)))` y un `If` cuya condición es `TypeCheck { name: resultado, target: Int, negated: false }`. La prueba es una expresión de tipo `Bool`; no convierte el valor y los tipos no se vuelven valores del lenguaje.
+El scanner reconoce `type` como `TypeOf`. El parser construye `Declare(resultado, Union([Int, String]), Literal(Int(5)))` y un `If` cuya condición es `TypeCheck { name: resultado, fields: [], target: Int, negated: false }`. La prueba es una expresión de tipo `Bool`; no convierte el valor y los tipos no se vuelven valores del lenguaje.
 
 El comprobador registra `declared_type: Union([Int, String])` y `narrowed_type: None`. El inicializador se acepta por inclusión, pero no produce un refinamiento. `with_condition()` copia el contexto; `assume_condition()` conserva las alternativas compatibles con el resultado de la prueba. En la rama verdadera queda `Int`, en la falsa `String`. `variable_type()` devuelve ese tipo refinado para comprobar cada suma. El intérprete guarda `Int(5)`, consulta `value_type()` al evaluar la condición y ejecuta la primera rama. Se imprime `6` seguido de un salto de línea.
 
 Una prueba `!=` invierte la elección; `!` invierte el resultado esperado de su operando. Para `&&` verdadero y `||` falso se combinan las restricciones de ambos lados. Los demás resultados reúnen caminos alternativos mediante `merge_scopes()` y conservan todos los tipos posibles de cualquiera de ellos. Para comprobar el lado derecho de `&&` y `||`, `expression_type_expected()` prepara el contexto de la izquierda verdadera o falsa, respectivamente. Se verifica todo el código sin ejecutarlo, incluso ramas que resulten imposibles.
 
-Una asignación completa usa `declared_type` para permitir cambiar a otra alternativa y luego borra `narrowed_type`. Las modificaciones que conservan el tipo, como `++` o `push`, mantienen el refinamiento. Los contextos tienen ámbitos separados: ocultar un nombre dentro de un bloque no altera la información de la variable exterior. Los argumentos por valor usan el tipo refinado, pero un argumento `inout` se compara con el tipo declarado; así una llamada no puede cambiar inadvertidamente la alternativa de una unión ni invalidar las condiciones ya comprobadas.
+Una asignación completa usa `declared_type` para permitir cambiar a otra alternativa y luego borra `narrowed_type`. Las modificaciones que conservan el tipo, como `++` o `push`, mantienen el refinamiento. Los contextos tienen ámbitos separados: ocultar un nombre dentro de un bloque no altera la información de la variable exterior. Los argumentos por valor usan el tipo refinado, pero un argumento `inout` se compara con el tipo declarado; así una llamada no puede cambiar la alternativa de la variable raíz. Los campos unión sí pueden cambiar mediante el alias, por lo que sus refinamientos se invalidan como se explica en el recorrido de estructuras.
 
 Antes de analizar un bucle, `forget_loop_writes()` recorre sus asignaciones completas y descarta las conclusiones sobre esos nombres, incluidas escrituras en ramas y bucles interiores. No resuelve todos los casos de ocultación: puede olvidar una conclusión exterior por una escritura a otro nombre local igual. Esta decisión conservadora evita utilizar en otra vuelta un tipo que ya pudo cambiar. `while` y `for` recuperan lo demostrado por su condición; en `for`, el cuerpo se comprueba antes de la actualización. Los saltos de control no se usan para deducir tipos nuevos. Tampoco se siguen pruebas guardadas en variables `bool`.
 
@@ -594,7 +694,7 @@ El intérprete guarda `total → Owned(Int(0))` en el ámbito 0. Al llamar, proc
 
 Si un parámetro `inout` se reenvía a otra llamada, se resuelve hasta su almacenamiento original. Se admiten varios alias de la misma variable: las lecturas ven inmediatamente las escrituras anteriores. Los argumentos normales conservan la copia tomada al evaluarse. Los alias solo señalan variables completas cuyos ámbitos siguen vivos; por eso esta versión no admite referencias a elementos que un `pop` podría eliminar. Sí se puede modificar cualquier elemento dentro del array recibido completo.
 
-`return` propaga `Control::Return` hasta la llamada, que devuelve el valor o termina sin él. Tanto el retorno como los errores cierran el ámbito de parámetros y retiran su entrada de `call_bases`. Los cambios ya realizados no se deshacen, tampoco ante un error posterior. Las expresiones devuelven copias de los valores, nunca alias. Si se superan las 100 llamadas anidadas, se informa de un error en la línea de la llamada.
+`return` propaga `Control::Return` hasta la llamada, que devuelve el valor o termina sin él. Tanto el retorno como los errores cierran el ámbito de parámetros y retiran su entrada de `call_bases`. Los cambios ya realizados no se deshacen, tampoco ante un error posterior. Las expresiones devuelven copias de los valores, nunca alias. Si se superan las 100 llamadas y construcciones simultáneas, se informa de un error en la línea de la llamada o construcción.
 
 Cada llamada a `run()` crea sus dos entornos con un único ámbito global. Los bloques de un `if`, los ámbitos de un `for` o un `foreach` y el de cada llamada se añaden y retiran sobre esa pila; al terminar el programa la pila vuelve a tener solo el ámbito global.
 
@@ -606,9 +706,10 @@ Cada llamada a `run()` crea sus dos entornos con un único ámbito global. Los b
 | Scanner | Comillas sin cerrar, `char` vacío o múltiple, exponente incompleto. | Error con línea. |
 | Parser | Falta un tipo válido, nombre, inicializador, paréntesis, corchete, llave, coma entre elementos o `;`; en los bucles, falta alguna de las tres partes del `for` o la palabra `in` del `foreach`; en una función, falta el `->` o el tipo tras él, un parámetro `inout` está mal formado o su argumento no es un nombre de variable completo; número fuera de rango. | Error con línea. |
 | Comprobación de tipos | Variable desconocida, declaración duplicada, tipo incompatible, elementos de tipos distintos, índice que no es `int`, vacío sin contexto, condición de `if`/`while`/`for` que no es `bool`, `foreach` que no recorre un array o cuyo tipo de elemento no coincide, `break`/`continue` fuera de un bucle, reasignación de una constante, `+=`/`-=`/`++`/`--` sobre un destino que no admite la operación, función duplicada o fuera del ámbito global, colisión entre función y variable global, parámetro repetido, llamada a una función desconocida o declarada más adelante, argumentos con aridad o tipo incorrectos, marcas `inout` ausentes o sobrantes, constantes pasadas como `inout`, escritura directa de globales desde una función, uso de una llamada sin valor como expresión, `return` fuera de una función, retorno de tipo incorrecto o ausente, y función con valor que no devuelve en todos los caminos. | Error con línea, antes de ejecutar. |
+| Estructuras: comprobación de tipos | Tipo desconocido o duplicado, declaración fuera del ámbito global, campo desconocido, repetido, obligatorio ausente o con tipo incompatible, escritura en campo `const`, uso de un campo unión sin comprobación suficiente, valor por defecto con nombre no disponible o modificación prohibida, autorrecursión sin alternativa finita, colisión de nombres globales o acceso a campo de un tipo no estructurado. | Error con línea, antes de ejecutar. |
 | Casting: comprobación de tipos | Biblioteca sin importar, ruta inválida o par no convertible, como `bool(1)`. | Error antes de ejecutar, con la línea de la función o de `cast`. |
 | Casting: ejecución | Texto inválido o resultado fuera de rango, como `int("hola")`. | Error con la línea de la función o de `cast`, conservando la salida previa. |
-| Intérprete | Índice de array fuera de rango, división/resto por cero, resultado numérico fuera de rango, profundidad máxima de llamadas superada; fallo al escribir. | Error con línea del corchete para índices, del operador para errores numéricos o de la llamada para la profundidad; se propaga el error de entrada/salida para escritura. |
+| Intérprete | Índice de array fuera de rango, división/resto por cero, resultado numérico fuera de rango, profundidad máxima de llamadas/construcciones o de valores superada, destino que cambia de tipo durante la evaluación; fallo al escribir. | Error con línea del corchete para índices, del operador para errores numéricos de la llamada/construcción para su profundidad o de la operación que produce un valor demasiado profundo; se propaga el error de entrada/salida para escritura. |
 
 Los errores propios del lenguaje usan `String`; la escritura y lectura pueden producir `io::Error`. `run()` los propaga mediante `Box<dyn Error>`, que admite distintos tipos de error. `main()` escribe el mensaje en `stderr` con el prefijo `Error:` y termina con código de fallo.
 
