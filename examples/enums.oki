@@ -1,0 +1,26 @@
+enum Estado { Pendiente, Hecho }
+Estado estado = Estado::Pendiente;
+println(estado);
+estado = Estado::Hecho;
+println(estado == Estado::Hecho);
+match estado {
+    Estado::Pendiente => { println("pendiente"); },
+    Estado::Hecho => { println("hecho"); }
+}
+
+enum Resultado { Ok(int valor), Error(string mensaje) }
+function dividir(int numero, int divisor) -> Resultado {
+    if (divisor == 0) {
+        return Resultado::Error("divisor cero");
+    }
+    return Resultado::Ok(numero / divisor);
+}
+function mostrar(Resultado resultado) {
+    match resultado {
+        Resultado::Ok(valor) => { println(valor); },
+        Resultado::Error(mensaje) => { println(mensaje); }
+    }
+}
+mostrar(dividir(12, 3));
+mostrar(dividir(12, 0));
+println(Resultado::Ok(4));

@@ -24,6 +24,7 @@ cargo run -- examples/variables_union.oki
 cargo run -- examples/estructuras.oki
 cargo run -- examples/estructuras_campos.oki
 cargo run -- examples/lista_enlazada.oki
+cargo run -- examples/enums.oki
 ```
 
 Cargo compila el intérprete y lo ejecuta. El separador `--` hace que la ruta llegue al programa como argumento. Se usa el primer argumento; los adicionales se ignoran. `.oki` es la extensión del proyecto, pero no se comprueba la extensión.
@@ -396,6 +397,68 @@ true
 La original conserva sus nodos:
 10 -> 20 -> 30 -> fin
 ```
+
+## Enums y match
+
+Un **enum** es un tipo propio cuyas variantes forman un conjunto cerrado. A diferencia de una unión como `int || string`, cada alternativa tiene un nombre y pertenece al mismo tipo enum.
+
+```oki
+enum Estado { Pendiente, Hecho }
+Estado estado = Estado::Pendiente;
+println(estado);
+estado = Estado::Hecho;
+println(estado == Estado::Hecho);
+match estado {
+    Estado::Pendiente => { println("pendiente"); },
+    Estado::Hecho => { println("hecho"); }
+}
+```
+
+Imprime `Estado::Pendiente`, `true` y `hecho`, cada uno en su línea.
+
+- La declaración es global, antes del uso y sin `;` final. Requiere al menos una variante y nombres sin duplicados. El nombre del tipo no puede coincidir con otra estructura, enum, variable o función global. Distintos enums pueden reutilizar nombres de variantes.
+- Las variantes siempre se califican con su enum: `Estado::Hecho`. Una variante sin datos se construye y se escribe en patrones sin paréntesis; `Estado::Hecho()` es un error.
+- Los enums admiten declaración, asignación, `const`, copias independientes, arrays, campos de estructuras, parámetros por valor o `inout`, retornos y uniones. `type dato == Estado` comprueba el tipo completo; no comprueba la variante.
+- `==` y `!=` comparan variante y contenido entre valores del mismo enum. Otro enum sigue siendo un tipo distinto aunque tenga variantes iguales. No admiten aritmética, ordenación ni conversiones de Casting.
+- `match expresión { ... }` es una instrucción y no devuelve un valor. Evalúa la expresión una sola vez, exige un enum concreto y ejecuta únicamente la rama de su variante. Una unión debe comprobarse con `type` antes de usar su alternativa enum.
+- Cada patrón es `Enum::Variante`, con capturas si tiene datos, seguido de `=>` y un bloque `{ ... }`. Las ramas se separan con comas; se permite una coma final tanto en ramas como en variantes. El `match` completo no lleva `;`; sus instrucciones interiores sí.
+- **Exhaustivo** significa que cubre todas las variantes, exactamente una vez. Se rechazan variantes omitidas, repetidas, desconocidas o de otro enum antes de ejecutar, incluso si la entrada conocida seleccionaría una rama válida. También se comprueban los tipos y nombres de todas las ramas.
+- Cada rama tiene su ámbito propio: sus declaraciones y capturas no escapan. Puede modificar variables externas conforme a las reglas de `const` e `inout`. `return`, `break` y `continue` se propagan; `match` no es un bucle y no habilita por sí mismo los dos últimos.
+- Una función con retorno puede garantizar todos sus caminos mediante un `match` exhaustivo cuando cada rama garantiza un `return` con valor. Si alguna rama puede terminar sin devolver, necesita un retorno posterior.
+
+### Variantes con datos
+
+```oki
+enum Resultado { Ok(int valor), Error(string mensaje) }
+Resultado resultado = Resultado::Ok(5);
+match resultado {
+    Resultado::Ok(valor) => { println(valor + 1); },
+    Resultado::Error(mensaje) => { println(mensaje); }
+}
+println(resultado);
+```
+
+Imprime `6` y `Resultado::Ok(5)`.
+
+- Cada dato declara un tipo concreto y un nombre: `Datos(int numero, string texto)`. No admite uniones en esos datos, `const` por dato ni valores por defecto. Una variante puede tener varios datos; sus nombres no se repiten dentro de la variante. Los tipos pueden ser básicos, arrays, estructuras o enums ya declarados.
+- Se construyen con argumentos por posición, de izquierda a derecha y una sola vez: `Datos::Par(3, "hola")`. Deben coincidir el número y los tipos exactos, sin conversiones implícitas. El tipo declarado da contexto a arrays vacíos.
+- Los patrones extraen los datos por posición: `Datos::Par(numero, texto) => { ... }`. Las capturas adquieren sus tipos automáticamente del patrón; esto no cambia la obligación de indicar tipo al declarar variables normales. No necesitan coincidir con los nombres de la definición, pero deben ser únicas dentro de la rama y cubrir todos los datos.
+- Las capturas son variables locales modificables que reciben copias profundas. Modificarlas no cambia el enum original, aunque proceda de una constante. Para conservar un cambio se construye y asigna una variante nueva.
+- La impresión usa `Enum::Variante` o `Enum::Variante(valor, ...)`, con cadenas y caracteres interiores entre comillas. El límite de profundidad de valores incluye los datos del enum.
+- No hay acceso directo a los datos con `.campo`, comodines, guardas, patrones literales o anidados, `match` como expresión, enums genéricos ni enums que se nombren a sí mismos o a tipos futuros. Para datos anidados se usa otro `match` dentro de la rama.
+
+El ejemplo [enums.oki](../examples/enums.oki) incluye ambos tipos de variante, asignación, igualdad, funciones que construyen un enum y capturas. Su salida completa es:
+
+```text
+Estado::Pendiente
+true
+hecho
+4
+divisor cero
+Resultado::Ok(4)
+```
+
+`Resultado` es un enum del ejemplo: H05 no añade un tipo genérico predefinido ni las operaciones de errores recuperables de H07.
 
 ## Arrays
 
@@ -906,13 +969,16 @@ Las funciones pueden seguir leyendo globales, pero cualquier escritura directa e
 
 ## Límites de esta versión
 
-Todavía no hay conversiones de arrays completos, operaciones de bits, potencia, acceso por índice a cadenas ni métodos de cadenas aparte de las conversiones de Casting, ni comentarios. Una función propia solo se admite en el ámbito global, no puede declararse dentro de un bloque ni pasar como valor, y el análisis de retorno es conservador: un bucle no basta para garantizar el retorno. El `for` exige sus tres partes. Las asignaciones abreviadas `+=`, `-=`, `++` y `--` son instrucciones, no expresiones: no se usan dentro de `println` ni como valor de una declaración. No hay prefijos `++x`/`--x` ni el resto de operadores compuestos (`*=`, `/=`, `%=`). No hay un bloque suelto ni una instrucción que declare un ámbito por sí misma más allá del cuerpo de un `if` o de un bucle. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
+Todavía no hay conversiones de arrays completos, operaciones de bits, potencia, acceso por índice a cadenas ni métodos de cadenas aparte de las conversiones de Casting, ni comentarios. Una función propia solo se admite en el ámbito global, no puede declararse dentro de un bloque ni pasar como valor, y el análisis de retorno es conservador: un bucle no basta para garantizar el retorno. El `for` exige sus tres partes. Las asignaciones abreviadas `+=`, `-=`, `++` y `--` son instrucciones, no expresiones: no se usan dentro de `println` ni como valor de una declaración. No hay prefijos `++x`/`--x` ni el resto de operadores compuestos (`*=`, `/=`, `%=`). No hay un bloque suelto ni una instrucción que declare un ámbito por sí misma más allá de los cuerpos de condiciones, bucles, funciones y ramas de `match`. La asignación es una instrucción; no se permite encadenar `a = b = 1;` ni usarla dentro de `println`.
 
-No existen `var`, `let`, `auto`, `any`, `null`, `void`, alias como `double` o `long`, tipos sin signo, otras colecciones, clases ni enums. Los tipos definidos por el usuario son estructuras con campos públicos, constantes opcionales por campo, valores por defecto, uniones y recursión mediante arrays o alternativas que terminen, sin métodos ni referencias compartidas. Se dispone de los cinco tipos básicos, estructuras y arrays homogéneos, es decir, de elementos del mismo tipo; las variables, constantes y los retornos de funciones también admiten uniones de estos tipos. `print` y `println` siguen siendo instrucciones reservadas. Las llamadas de biblioteca incluyen `len`, `push` y `pop` de `std::Array` y las conversiones explícitas de `std::Casting`, con las directivas descritas arriba; además existen funciones propias con parámetros tipados, valor de retorno opcional, `return` y recursión directa limitada, descritas más arriba.
+No existen `var`, `let`, `auto`, `any`, `null`, `void`, alias como `double` o `long`, tipos sin signo, otras colecciones, clases ni enums genéricos. Los tipos definidos por el usuario incluyen enums y estructuras con campos públicos, constantes opcionales por campo, valores por defecto, uniones y recursión mediante arrays o alternativas que terminen, sin métodos ni referencias compartidas. Se dispone de los cinco tipos básicos, estructuras, enums y arrays homogéneos, es decir, de elementos del mismo tipo; las variables, constantes y los retornos de funciones también admiten uniones de estos tipos. `print` y `println` siguen siendo instrucciones reservadas. Las llamadas de biblioteca incluyen `len`, `push` y `pop` de `std::Array` y las conversiones explícitas de `std::Casting`, con las directivas descritas arriba; además existen funciones propias con parámetros tipados, valor de retorno opcional, `return` y recursión directa limitada, descritas más arriba.
 
 La ejecución recorre un árbol de sintaxis. No se genera código máquina ni bytecode y no se han medido prestaciones.
 
 ## Qué se comprueba
+
+Las dieciocho pruebas de H05 en [src/enum_tests.rs](../src/enum_tests.rs) cubren el ejemplo, tipos nominales, declaración y variantes válidas, exhaustividad, ámbitos, selección y evaluación única, datos de todos los tipos admitidos, capturas y copias profundas, funciones y `inout`, arrays y estructuras, uniones y refinamientos, retornos y saltos de bucle, sintaxis y errores antes de emitir salida, líneas y cierre de ámbitos ante errores de ejecución, aislamiento y límites de valores y llamadas recursivas.
+
 
 Las catorce pruebas de ampliaciones de estructuras en [src/structure_tests.rs](../src/structure_tests.rs) comprueban campos `const` profundos, nuevos valores al reemplazar estructuras, valores por defecto por instancia, orden, nombres y solo lectura, contexto de arrays vacíos, campos unión, refinamientos e invalidación por escrituras, llamadas e índices, alias `inout`, sombras y `foreach`, recursión en árboles y cadenas, copias e igualdad, errores y cierre de ámbitos, límites de construcciones y de valores que crecen en bucles, y tipos de destinos cambiados durante la evaluación. Conservan los casos anteriores y añaden `estructuras_campos.oki`.
 
@@ -924,7 +990,7 @@ Las siete pruebas de modificación comprueban `push` y `pop` en las dos sintaxis
 
 Las nueve pruebas de biblioteca verifican las tres formas de llamada, importación y nombre corto en orden, aislamiento entre ejecuciones, arrays de todos los tipos, constantes, vacíos y anidados, composición con expresiones y bucles, sintaxis incompleta, métodos y rutas desconocidos, tipos y argumentos incorrectos, líneas de error, cortocircuito y conservación de salida ante errores de ejecución. Incluyen el ejemplo `biblioteca_arrays.oki` y conservan la prueba de `hello.oki`.
 
-Las 156 pruebas de [src/main.rs](../src/main.rs) y [src/structure_tests.rs](../src/structure_tests.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Las cinco pruebas nuevas de bucles cubren el ejemplo `bucles.oki`, la repetición de `while`, el orden inicialización-condición-cuerpo-actualización del `for`, la actualización de elementos por índice, el ámbito propio del contador, la ocultación de nombres, el recorrido y la copia de elementos de `foreach` (incluidos arrays anidados y vacíos), la comprobación del tipo de elemento, el rechazo de `for` con constante y las condiciones y sintaxis inválidas de los tres bucles. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa. Las seis pruebas nuevas de asignaciones abreviadas cubren el ejemplo `asignaciones.oki`, el incremento y decremento de `int` y `float`, `+=` y `-=` con los tipos admitidos, la actualización de elementos de array (también anidados), el uso en la cabecera del `for`, el rechazo de constantes, las combinaciones de tipos incompatibles, la sintaxis incompleta (incluido el prefijo `++x`, que no se admite) y el desbordamiento en ejecución. Tres pruebas de control de bucles cubren la semántica de `break` y `continue` en `while`, `for` y `foreach`, la actualización del `for` al continuar, el destino en bucles anidados, el cierre de ámbitos y el rechazo antes de ejecutar cuando los saltos aparecen fuera de un bucle.
+Las 174 pruebas de [src/main.rs](../src/main.rs), [src/structure_tests.rs](../src/structure_tests.rs) y [src/enum_tests.rs](../src/enum_tests.rs) conservan los casos de impresión y `hello.oki`, y añaden el ejemplo `tipos.oki`, literales de los cinco tipos, copia y reasignación, rechazo de todas las combinaciones de tipos distintos, declaración obligatoria, uso antes de declarar, duplicados, límites numéricos, notación científica, Unicode, líneas de error y aislamiento entre ejecuciones. También se comprueban el ejemplo `operaciones.oki`, aritmética y signos, precedencia y agrupación, comparaciones de cada tipo, concatenación Unicode, tablas de verdad, cortocircuito, rechazo de mezclas de tipos en todos los operadores binarios, división por cero, desbordamiento y línea del operador. También se comprueban las constantes de los cinco tipos, copias independientes, inicializadores con expresiones, sintaxis incompleta, nombres duplicados, tipos incompatibles y rechazo de reasignaciones (incluido el mismo valor) con línea de error y sin salida parcial. Las nueve pruebas de arrays cubren el ejemplo, los cinco tipos de elementos, vacíos, anidación, lecturas y escrituras con índices, precedencia, copias independientes, protección profunda de constantes, igualdad, mezclas de tipos, sintaxis incompleta, límites negativos y extremos, líneas de error, orden de evaluación y cortocircuito. Las cuatro pruebas de condiciones cubren el ejemplo, la elección de rama con `else if`/`else`, la omisión del `else`, el ámbito propio de cada bloque, la ocultación de nombres, la reasignación de una variable externa, el rechazo de constantes y las condiciones y sintaxis inválidas. Las cinco pruebas nuevas de bucles cubren el ejemplo `bucles.oki`, la repetición de `while`, el orden inicialización-condición-cuerpo-actualización del `for`, la actualización de elementos por índice, el ámbito propio del contador, la ocultación de nombres, el recorrido y la copia de elementos de `foreach` (incluidos arrays anidados y vacíos), la comprobación del tipo de elemento, el rechazo de `for` con constante y las condiciones y sintaxis inválidas de los tres bucles. Se verifica que los errores de análisis y tipos no produzcan salida parcial y que los de ejecución conserven la salida previa. Las seis pruebas nuevas de asignaciones abreviadas cubren el ejemplo `asignaciones.oki`, el incremento y decremento de `int` y `float`, `+=` y `-=` con los tipos admitidos, la actualización de elementos de array (también anidados), el uso en la cabecera del `for`, el rechazo de constantes, las combinaciones de tipos incompatibles, la sintaxis incompleta (incluido el prefijo `++x`, que no se admite) y el desbordamiento en ejecución. Tres pruebas de control de bucles cubren la semántica de `break` y `continue` en `while`, `for` y `foreach`, la actualización del `for` al continuar, el destino en bucles anidados, el cierre de ámbitos y el rechazo antes de ejecutar cuando los saltos aparecen fuera de un bucle.
 
 Las dieciséis pruebas de funciones propias cubren el ejemplo `funciones.oki`, los parámetros de tipo básico y de array, el ámbito local y la ocultación de nombres, la lectura de globales y el rechazo de constantes, el encadenamiento y la exigencia de declaración previa, la aridad y los tipos exactos sin conversiones, el rechazo de la llamada sin valor como expresión, las declaraciones inválidas (duplicados, colisión con variables, parámetros repetidos, funciones dentro de bloques y anotaciones de retorno mal formadas), la recursión directa, el límite de profundidad, el orden de evaluación de los argumentos y la conservación de la salida ante errores de ejecución. Las siete nuevas comprueban el retorno de cada tipo básico, la composición de llamadas con valor en expresiones, el retorno en ramas `if`/`else`, dentro de bucles y en funciones recursivas, la coincidencia exacta del tipo de retorno, la cobertura de todos los caminos, el rechazo de `return` fuera de una función, el `return;` de las funciones sin valor y la convivencia de funciones con y sin retorno.
 

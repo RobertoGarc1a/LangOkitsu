@@ -4,9 +4,9 @@ Este documento convierte ideas en encargos pequeños y revisables. **H01, H02a, 
 
 ## Estado de partida
 
-OkitsuLang es un intérprete de árbol en Rust. El programa se lee desde un archivo UTF-8; las etapas actuales separan scanner, parser y AST, comprobador de tipos e intérprete. La biblioteca estándar ofrece `Array` y `Casting`. El lenguaje tiene los tipos `int`, `float`, `bool`, `char`, `string` y arrays, además de declaraciones, asignaciones, `if`/`else`, `while`, `for`, `foreach`, `break`, `continue`, impresión y conversiones explícitas. Las variables requieren tipo y valor inicial. La comprobación de tipos ocurre antes de ejecutar. Hay funciones propias con parámetros tipados y valor de retorno opcional: se declaran con `function` solo en el ámbito global, usan `return`, admiten recursión directa con un límite de profundidad y exigen el tipo de retorno tras `->` cuando devuelven un valor. Los parámetros `inout` exigen la marca también en la llamada y permiten modificar variables completas del llamador. Hay estructuras de valor con campos públicos, constantes por campo, valores por defecto, campos unión y autorrecursión finita; no hay enums, entrada estándar, lectura de archivos, módulos del programa ni vistas de arrays. El `foreach` actual recorre una copia.
+OkitsuLang es un intérprete de árbol en Rust. El programa se lee desde un archivo UTF-8; las etapas actuales separan scanner, parser y AST, comprobador de tipos e intérprete. La biblioteca estándar ofrece `Array` y `Casting`. El lenguaje tiene los tipos `int`, `float`, `bool`, `char`, `string` y arrays, además de declaraciones, asignaciones, `if`/`else`, `while`, `for`, `foreach`, `break`, `continue`, impresión y conversiones explícitas. Las variables requieren tipo y valor inicial. La comprobación de tipos ocurre antes de ejecutar. Hay funciones propias con parámetros tipados y valor de retorno opcional: se declaran con `function` solo en el ámbito global, usan `return`, admiten recursión directa con un límite de profundidad y exigen el tipo de retorno tras `->` cuando devuelven un valor. Los parámetros `inout` exigen la marca también en la llamada y permiten modificar variables completas del llamador. Hay estructuras de valor con campos públicos, constantes por campo, valores por defecto, campos unión y autorrecursión finita; hay enums con y sin datos y match exhaustivo; no hay entrada estándar, lectura de archivos, módulos del programa ni vistas de arrays. El `foreach` actual recorre una copia.
 
-La sintaxis de los hitos pendientes es tentativa y no está implementada; H02 y H04 describen ya la sintaxis real. Las etapas mencionadas son las responsabilidades actuales: `scanner`, `parser` (donde se define también el AST), `type_checker`, `interpreter` y `stdlib`. Cuando una característica afecte al recorrido o las responsabilidades internas, se actualizará además `docs/funcionamiento-interno.md`.
+La sintaxis de los hitos pendientes es tentativa y no está implementada; H02, H04 y H05 describen ya la sintaxis real. Las etapas mencionadas son las responsabilidades actuales: `scanner`, `parser` (donde se define también el AST), `type_checker`, `interpreter` y `stdlib`. Cuando una característica afecte al recorrido o las responsabilidades internas, se actualizará además `docs/funcionamiento-interno.md`.
 
 ## Cómo ejecutar esta hoja de ruta con agentes
 
@@ -20,7 +20,7 @@ Los hitos pequeños y no solapados (por ejemplo, `break` y `continue` después d
 
 ## Orden propuesto
 
-Las dependencias indican el orden aconsejado. H01, H02a, H02b y H04 están completados; H03 se ha aplazado por indicación del usuario y los demás hitos siguen pendientes.
+Las dependencias indican el orden aconsejado. H01, H02a, H02b, H04 y H05 están completados; H03 se ha aplazado por indicación del usuario y los demás hitos siguen pendientes.
 
 ### H01 — `break` y `continue`
 
@@ -81,34 +81,29 @@ Las dependencias indican el orden aconsejado. H01, H02a, H02b y H04 están compl
 
 ### H05 — Enums y `match`
 
-**Estado: pendiente; no implementado.** Representar un conjunto cerrado de alternativas y elegir ramas de forma comprobable.
+**Estado: implementado completo el 2026-09-28**, incluyendo la parte opcional H05c por el encargo «H05 completo».
 
 #### H05a — Enums sin datos
 
-- **Sintaxis tentativa:** `enum Estado { Pendiente, Hecho }` y `Estado::Hecho`.
-- **Semántica por decidir:** ámbito de los nombres de variante, igualdad, representación e impresión, y si se exige calificación completa siempre.
-- **Etapas:** `scanner`, `parser`/AST, `type_checker`, `interpreter`/`value`; `stdlib` no necesaria.
-- **Dependencias:** H04 no es necesaria si las variantes aún no contienen campos.
-- **Pruebas observables:** declarar y asignar variantes, comparar del mismo enum, rechazar enum desconocido, variante desconocida y comparación de enums distintos.
-- **Documentación al implementarlo:** estado, recorrido interno de representación de variantes, ejemplo e historial; enlazar desde README.
+- **Sintaxis implementada:** `enum Estado { Pendiente, Hecho }`, `Estado::Hecho`. Declaración global antes de usar y sin punto y coma final; al menos una variante, nombres únicos y sin colisiones con tipos, variables o funciones globales.
+- **Semántica:** variantes siempre calificadas, sin paréntesis cuando no tienen datos. Copias independientes, igualdad nominal y por contenido; impresión `Estado::Hecho`. Se integran en arrays, estructuras, funciones, `inout`, constantes y uniones.
+- **Etapas:** scanner, parser/AST, comprobador e intérprete/valores. `Type::Named` unifica las anotaciones de tipos propios; los registros distinguen enum de estructura. Casting sigue limitado a tipos básicos.
 
 #### H05b — `match` exhaustivo
 
-- **Sintaxis tentativa:** `match estado { Estado::Pendiente => { ... }, Estado::Hecho => { ... } }`.
-- **Semántica por decidir:** si se permite un caso comodín, si las ramas son expresiones o bloques de instrucciones, valor de un `match` como expresión y reglas de ámbito por rama. La primera versión debería ser un bloque de instrucciones y exigir cubrir cada variante, sin patrones anidados.
-- **Etapas:** `scanner`, `parser`/AST, `type_checker` (exhaustividad y duplicados) e `interpreter` (selección de rama y ámbito).
-- **Dependencias:** H05a.
-- **Pruebas observables:** cada variante selecciona su rama; enum distinto, patrón repetido y rama ausente fallan antes de ejecutar; variable de rama no escapa.
-- **Documentación al implementarlo:** estado con regla de exhaustividad; funcionamiento interno con un ejemplo de análisis y ejecución; ejemplos, historial y enlaces.
+- **Sintaxis implementada:** `match estado { Estado::Pendiente => { ... }, Estado::Hecho => { ... } }`. Ramas con bloques de instrucciones, separadas por comas y con coma final opcional; no es una expresión ni lleva `;` final.
+- **Semántica:** sujeto enum concreto evaluado una vez; todas las variantes exactamente una vez, sin comodín ni guardas. Cada rama tiene su ámbito propio. Se comprueban todas antes de ejecutar; se ejecuta solo la seleccionada. Retornos y saltos atraviesan las ramas; todas las ramas con retorno permiten garantizar el retorno de una función.
+- **Etapas:** tokens `Match` y `FatArrow`, `Stmt::Match` / `MatchArm`, exhaustividad y combinación de refinamientos en el comprobador, selección y cierre de ámbitos en el intérprete.
 
-#### H05c — Variantes con datos (opcional)
+#### H05c — Variantes con datos
 
-- **Sintaxis tentativa:** `enum Resultado { Ok(int valor), Error(string mensaje) }` y patrones que extraigan los campos.
-- **Semántica por decidir:** forma de los patrones, ámbito y tipo de cada dato capturado, movimiento/copia y tratamiento de datos anidados.
-- **Etapas:** `parser`/AST, `type_checker`, `interpreter`/`value`; tokens adicionales solo si la gramática lo requiere.
-- **Dependencias:** H05a y H05b; estructuras H04 no son requisito si se limitan los campos a tipos ya existentes.
-- **Pruebas observables:** construcción de cada variante, extracción de datos con tipos correctos, número/tipo incorrecto de campos y patrones no exhaustivos.
-- **Documentación al implementarlo:** actualizar las mismas guías y el historial con ejemplos funcionales.
+- **Sintaxis implementada:** `enum Resultado { Ok(int valor), Error(string mensaje) }`, `Resultado::Ok(5)` y `Resultado::Ok(numero) => { println(numero); }`.
+- **Semántica:** uno o varios datos con tipos concretos ya disponibles, construcción y captura por posición, aridad y tipos exactos. Datos evaluados una vez y en orden; capturas locales modificables por copia profunda, con tipo obtenido de la definición. Sin acceso directo por campo, patrones anidados, tipos adelantados o enums autorrecursivos; sin uniones, constantes ni valores por defecto en sus datos. Los datos pueden contener estructuras y enums anteriores y arrays.
+- **Etapas:** `VariantDef`, rutas `Expr::Qualified` resueltas como variante o biblioteca, `Value::Enum`, impresión e igualdad por variante y datos. Se conserva la API de Array y el contexto de arrays vacíos.
+
+- **Pruebas realizadas para H05:** dieciocho nuevas en `src/enum_tests.rs`; 174 en total. Cubren variantes, tipos, exhaustividad, ámbito y capturas, copias, integración, efectos y refinamientos, errores estáticos y de ejecución, sintaxis, aislamiento y límites de profundidad. Se conserva `hello.oki`.
+- **Documentación y ejemplo:** README, estado actual, recorrido interno, historial y `examples/enums.oki`.
+- **Alcance:** H03 sigue aplazado y H06/H07 pendientes. `Resultado` es un enum propio del ejemplo; no se añaden opcionales ni resultados genéricos predefinidos.
 
 ### H06 — Tipos opcionales
 
@@ -211,4 +206,4 @@ Las dependencias indican el orden aconsejado. H01, H02a, H02b y H04 están compl
 
 Un hito solo se considera completado después de que un encargo explícito autorice su implementación y se cumplan los requisitos de `AGENTS.md`: revisar y conservar cambios del usuario, añadir pruebas observables para cambios de comportamiento, mantener `hello.oki`, actualizar `docs/estado-actual.md`, `docs/funcionamiento-interno.md` cuando cambie el recorrido interno, `docs/historial.md` y los enlaces/ejemplos necesarios. Para cambios Rust, ejecutar `cargo fmt -- --check`, `cargo test` y `cargo clippy --all-targets -- -D warnings`; si cambia la ejecución desde archivo, ejecutar también `cargo run -- examples/hello.oki`. Registrar sin inventar cualquier comprobación que no se haya podido ejecutar.
 
-La lista es orientativa y se puede reordenar mediante un encargo del usuario. El orden no autoriza cambios; H01, H02a, H02b y H04 figuran como completados; H03 queda aplazado y los demás hitos siguen pendientes.
+La lista es orientativa y se puede reordenar mediante un encargo del usuario. El orden no autoriza cambios; H01, H02a, H02b, H04 y H05 figuran como completados; H03 queda aplazado y los demás hitos siguen pendientes.

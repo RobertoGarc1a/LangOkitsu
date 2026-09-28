@@ -10,6 +10,9 @@ mod value;
 #[cfg(test)]
 mod structure_tests;
 
+#[cfg(test)]
+mod enum_tests;
+
 use interpreter::Interpreter;
 use parser::Parser;
 use scanner::Scanner;
@@ -196,25 +199,19 @@ mod tests {
             ),
             (
                 "struct P { Q q; } struct Q {}",
-                "tipo estructura 'Q' no está declarado",
+                "tipo 'Q' no está declarado",
             ),
             ("struct P { P p; }", "no permite un valor finito"),
-            (
-                "function f(Q q) {}",
-                "tipo estructura 'Q' no está declarado",
-            ),
+            ("function f(Q q) {}", "tipo 'Q' no está declarado"),
             (
                 "function f() -> Q { return 1; }",
-                "tipo estructura 'Q' no está declarado",
+                "tipo 'Q' no está declarado",
             ),
             (
                 "int x = 1; println(type x == Q);",
-                "tipo estructura 'Q' no está declarado",
+                "tipo 'Q' no está declarado",
             ),
-            (
-                "foreach (Q q in [1]) {}",
-                "tipo estructura 'Q' no está declarado",
-            ),
+            ("foreach (Q q in [1]) {}", "tipo 'Q' no está declarado"),
             ("struct P {} int P = 1;", "declarado como estructura"),
             ("int P = 1; struct P {}", "variable o función global"),
             ("struct P {} function P() {}", "declarado como estructura"),

@@ -16,6 +16,9 @@ pub enum TokenKind {
     Continue,
     Function,
     Struct,
+    Enum,
+    Match,
+    FatArrow,
     InOut,
     Return,
     In,
@@ -96,7 +99,13 @@ impl<'a> Scanner<'a> {
                 '.' => TokenKind::Dot,
                 ':' => self.paired(':', TokenKind::ColonColon, TokenKind::Colon),
                 ';' => TokenKind::Semicolon,
-                '=' => self.paired('=', TokenKind::EqualEqual, TokenKind::Equal),
+                '=' => {
+                    if self.chars.next_if_eq(&'>').is_some() {
+                        TokenKind::FatArrow
+                    } else {
+                        self.paired('=', TokenKind::EqualEqual, TokenKind::Equal)
+                    }
+                }
                 '!' => self.paired('=', TokenKind::BangEqual, TokenKind::Bang),
                 '<' => self.paired('=', TokenKind::LessEqual, TokenKind::Less),
                 '>' => self.paired('=', TokenKind::GreaterEqual, TokenKind::Greater),
@@ -273,6 +282,8 @@ impl<'a> Scanner<'a> {
             "continue" => TokenKind::Continue,
             "function" => TokenKind::Function,
             "struct" => TokenKind::Struct,
+            "enum" => TokenKind::Enum,
+            "match" => TokenKind::Match,
             "inout" => TokenKind::InOut,
             "return" => TokenKind::Return,
             "in" => TokenKind::In,

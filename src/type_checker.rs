@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    parser::{BinaryOp, CallArgument, Expr, FieldDef, Name, Stmt, TargetStep, UnaryOp},
+    parser::{BinaryOp, CallArgument, Expr, FieldDef, Name, Stmt, TargetStep, UnaryOp, VariantDef},
     stdlib::{ArrayFunction, StandardLibrary},
     value::Type,
 };
@@ -30,6 +30,7 @@ pub struct TypeChecker {
     scopes: Vec<HashMap<String, VariableInfo>>,
     functions: HashMap<String, FunctionSignature>,
     structures: HashMap<String, Vec<FieldDef>>,
+    enums: HashMap<String, Vec<VariantDef>>,
     // Tipo esperado en un `return`. La pila distingue "fuera de función" (vacía)
     // de una función sin valor (`Some(None)`) o con valor (`Some(Some(tipo))`).
     return_types: Vec<Option<Type>>,
@@ -42,6 +43,7 @@ impl TypeChecker {
         self.library = StandardLibrary::default();
         self.functions.clear();
         self.structures.clear();
+        self.enums.clear();
         self.return_types.clear();
         self.loop_depth = 0;
         self.scopes.push(HashMap::new());
@@ -59,6 +61,111 @@ impl TypeChecker {
 
     fn check_statement(&mut self, statement: &Stmt) -> Result<(), String> {
         match statement {
+            Stmt::Enum { name, variants } => {
+                if self.scopes.len() != 1 {
+                    return Err(
+                        name.error("Los enums solo se permiten en el ámbito global del archivo.")
+                    );
+                }
+                if self.structures.contains_key(&name.text)
+                    || self.enums.contains_key(&name.text)
+                    || self.functions.contains_key(&name.text)
+                    || self.scopes[0].contains_key(&name.text)
+                {
+                    return Err(name.error("El nombre del enum ya está declarado."));
+                }
+                if variants.is_empty() {
+                    return Err(name.error("Un enum requiere al menos una variante."));
+                }
+                let mut seen = HashSet::new();
+                for variant in variants {
+                    if !seen.insert(&variant.name.text) {
+                        return Err(variant.name.error("La variante está repetida."));
+                    }
+                    let mut fields = HashSet::new();
+                    for (kind, field) in &variant.fields {
+                        self.validate_type(kind, field)?;
+                        if !fields.insert(&field.text) {
+                            return Err(field.error("El nombre del dato está repetido."));
+                        }
+                    }
+                }
+                self.enums.insert(name.text.clone(), variants.clone());
+            }
+            Stmt::Match { value, arms, line } => {
+                let kind = self.expression_type(value)?;
+                let Type::Named(enum_name) = &kind else {
+                    return Err(format!(
+                        "Línea {line}: match requiere un tipo enum concreto; se recibió {kind}."
+                    ));
+                };
+                let variants = self.enums.get(enum_name).cloned().ok_or_else(|| {
+                    format!(
+                        "Línea {line}: match requiere un tipo enum concreto; se recibió {kind}."
+                    )
+                })?;
+                self.forget_expression_effects(value);
+                let mut seen = HashSet::new();
+                let mut merged: Option<Self> = None;
+                for arm in arms {
+                    if arm.enum_name.text != *enum_name {
+                        return Err(arm
+                            .enum_name
+                            .error(&format!("El patrón debe pertenecer al enum '{enum_name}'.")));
+                    }
+                    let variant = self.enum_variant(&arm.enum_name, &arm.variant)?;
+                    if !seen.insert(arm.variant.text.clone()) {
+                        return Err(arm.variant.error("La rama de esta variante está repetida."));
+                    }
+                    let bindings = arm.bindings.as_deref().unwrap_or(&[]);
+                    if bindings.len() != variant.fields.len()
+                        || arm.bindings.is_some() != !variant.fields.is_empty()
+                    {
+                        return Err(arm.variant.error(&format!("El patrón requiere {} capturas; las variantes sin datos se escriben sin paréntesis.", variant.fields.len())));
+                    }
+                    let mut branch = self.clone();
+                    branch.scopes.push(HashMap::new());
+                    for (binding, (kind, _)) in bindings.iter().zip(&variant.fields) {
+                        let scope = branch.scopes.last_mut().expect("ámbito abierto");
+                        if scope.contains_key(&binding.text) {
+                            return Err(binding.error("El nombre de captura está repetido."));
+                        }
+                        scope.insert(
+                            binding.text.clone(),
+                            VariableInfo {
+                                narrowed_type: None,
+                                narrowed_fields: HashMap::new(),
+                                declared_type: kind.clone(),
+                                is_constant: false,
+                                is_inout: false,
+                            },
+                        );
+                    }
+                    branch.check_statements(&arm.body)?;
+                    branch.scopes.pop();
+                    if let Some(previous) = merged.take() {
+                        let mut next = self.clone();
+                        next.merge_scopes(&previous, &branch);
+                        merged = Some(next);
+                    } else {
+                        merged = Some(branch);
+                    }
+                }
+                let missing: Vec<_> = variants
+                    .iter()
+                    .filter(|v| !seen.contains(&v.name.text))
+                    .map(|v| v.name.text.as_str())
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(format!(
+                        "Línea {line}: match no exhaustivo; faltan variantes de '{enum_name}': {}.",
+                        missing.join(", ")
+                    ));
+                }
+                if let Some(merged) = merged {
+                    self.scopes = merged.scopes;
+                }
+            }
             Stmt::Struct { name, fields } => {
                 if self.scopes.len() != 1 {
                     return Err(name.error(
@@ -69,6 +176,9 @@ impl TypeChecker {
                     return Err(
                         name.error(&format!("La estructura '{}' ya está declarada.", name.text))
                     );
+                }
+                if self.enums.contains_key(&name.text) {
+                    return Err(name.error("El nombre ya está declarado como enum."));
                 }
                 if self.functions.contains_key(&name.text)
                     || self.scopes[0].contains_key(&name.text)
@@ -140,6 +250,9 @@ impl TypeChecker {
                 }
                 if self.structures.contains_key(&name.text) {
                     return Err(name.error("El nombre ya está declarado como estructura."));
+                }
+                if self.enums.contains_key(&name.text) {
+                    return Err(name.error("El nombre ya está declarado como enum."));
                 }
                 if let Some(kind) = return_type {
                     self.validate_type(kind, name)?;
@@ -258,6 +371,9 @@ impl TypeChecker {
                 self.validate_type(declared_type, name)?;
                 if self.scopes.len() == 1 && self.structures.contains_key(&name.text) {
                     return Err(name.error("El nombre ya está declarado como estructura."));
+                }
+                if self.scopes.len() == 1 && self.enums.contains_key(&name.text) {
+                    return Err(name.error("El nombre ya está declarado como enum."));
                 }
                 if self
                     .scopes
@@ -469,6 +585,49 @@ impl TypeChecker {
         result
     }
 
+    fn enum_variant(&self, name: &Name, variant: &Name) -> Result<&VariantDef, String> {
+        self.enums
+            .get(&name.text)
+            .ok_or_else(|| name.error(&format!("El enum '{}' no está declarado.", name.text)))?
+            .iter()
+            .find(|v| v.name.text == variant.text)
+            .ok_or_else(|| {
+                variant.error(&format!(
+                    "La variante '{}' no existe en '{}'.",
+                    variant.text, name.text
+                ))
+            })
+    }
+
+    fn qualified_type(
+        &self,
+        path: &[Name],
+        arguments: &Option<Vec<Expr>>,
+    ) -> Result<Option<Type>, String> {
+        if self.enums.contains_key(&path[0].text) || arguments.is_none() {
+            let variant = self.enum_variant(&path[0], &path[1])?;
+            let supplied = arguments.as_deref().unwrap_or(&[]);
+            if supplied.len() != variant.fields.len()
+                || arguments.is_some() != !variant.fields.is_empty()
+            {
+                return Err(path[1].error(&format!("La variante esperaba {} argumentos; las variantes sin datos se escriben sin paréntesis.", variant.fields.len())));
+            }
+            let mut context = self.clone();
+            for (value, (expected, field)) in supplied.iter().zip(&variant.fields) {
+                let actual = context.expression_type_expected(value, Some(expected))?;
+                Self::require_type(field, expected, &actual)?;
+                context.forget_expression_effects(value);
+            }
+            Ok(Some(Type::Named(path[0].text.clone())))
+        } else {
+            self.check_library_call(
+                path,
+                None,
+                arguments.as_deref().expect("llamada con argumentos"),
+            )
+        }
+    }
+
     fn expression_type(&self, expression: &Expr) -> Result<Type, String> {
         self.expression_type_expected(expression, None)
     }
@@ -480,6 +639,11 @@ impl TypeChecker {
         expected: Option<&Type>,
     ) -> Result<Type, String> {
         match expression {
+            Expr::Qualified { path, arguments } => {
+                self.qualified_type(path, arguments)?.ok_or_else(|| {
+                    path[1].error("'push' no devuelve un valor; úsalo como instrucción con ';'.")
+                })
+            }
             Expr::Struct { name, fields } => {
                 let declared = self.structures.get(&name.text).ok_or_else(|| {
                     name.error(&format!("La estructura '{}' no está declarada.", name.text))
@@ -492,7 +656,7 @@ impl TypeChecker {
                             field.error(&format!("El campo '{}' está repetido.", field.text))
                         );
                     }
-                    let kind = self.field_type(Type::Struct(name.text.clone()), field)?;
+                    let kind = self.field_type(Type::Named(name.text.clone()), field)?;
                     let actual = context.expression_type_expected(value, Some(&kind))?;
                     context.forget_expression_effects(value);
                     Self::require_type(field, &kind, &actual)?;
@@ -505,7 +669,7 @@ impl TypeChecker {
                         )));
                     }
                 }
-                Ok(Type::Struct(name.text.clone()))
+                Ok(Type::Named(name.text.clone()))
             }
             Expr::Field { object, name } => {
                 if let Some((root, fields)) = expression.field_path() {
@@ -651,6 +815,9 @@ impl TypeChecker {
     }
 
     fn check_call(&self, expression: &Expr) -> Result<Option<Type>, String> {
+        if let Expr::Qualified { path, arguments } = expression {
+            return self.qualified_type(path, arguments);
+        }
         if matches!(expression, Expr::Cast { .. }) {
             return self.expression_type(expression).map(Some);
         }
@@ -705,10 +872,19 @@ impl TypeChecker {
         else {
             unreachable!("instrucción de llamada validada por el parser")
         };
+        self.check_library_call(path, receiver.as_deref(), arguments)
+    }
+
+    fn check_library_call(
+        &self,
+        path: &[Name],
+        receiver: Option<&Expr>,
+        arguments: &[Expr],
+    ) -> Result<Option<Type>, String> {
         let function = self.library.resolve(path, receiver.is_some())?;
         let name = path.last().expect("ruta con nombre de método");
         function.check_arity(arguments.len(), receiver.is_some(), name)?;
-        let array = receiver.as_deref().unwrap_or_else(|| &arguments[0]);
+        let array = receiver.unwrap_or_else(|| &arguments[0]);
         let array_type = self.expression_type(array)?;
         let result = function.result_type(&array_type, name)?;
         if !matches!(function, ArrayFunction::Len) {
@@ -832,8 +1008,8 @@ impl TypeChecker {
 
     fn validate_type(&self, kind: &Type, name: &Name) -> Result<(), String> {
         match kind {
-            Type::Struct(structure) if !self.structures.contains_key(structure) => {
-                Err(name.error(&format!("El tipo estructura '{structure}' no está declarado; declara los tipos antes de usarlos.")))
+            Type::Named(structure) if !self.structures.contains_key(structure) && !self.enums.contains_key(structure) => {
+                Err(name.error(&format!("El tipo '{structure}' no está declarado; declara las estructuras o enums antes de usarlos.")))
             }
             Type::Array(element) => self.validate_type(element, name),
             Type::Union(types) => {
@@ -846,7 +1022,7 @@ impl TypeChecker {
 
     fn has_finite_alternative(kind: &Type, own_name: &str) -> bool {
         match kind {
-            Type::Struct(name) => name != own_name,
+            Type::Named(name) => name != own_name,
             Type::Union(types) => types
                 .iter()
                 .any(|kind| Self::has_finite_alternative(kind, own_name)),
@@ -855,12 +1031,18 @@ impl TypeChecker {
     }
 
     fn field_definition(&self, object: &Type, name: &Name) -> Result<&FieldDef, String> {
-        let Type::Struct(structure) = object else {
+        let Type::Named(structure) = object else {
             return Err(name.error(&format!(
                 "Solo las estructuras tienen campos; se recibió {object}."
             )));
         };
-        self.structures[structure]
+        self.structures
+            .get(structure)
+            .ok_or_else(|| {
+                name.error(&format!(
+                    "Solo las estructuras tienen campos; se recibió {object}."
+                ))
+            })?
             .iter()
             .find(|field| field.name.text == name.text)
             .ok_or_else(|| {
@@ -978,6 +1160,13 @@ impl TypeChecker {
     // cambiar cualquier campo, aunque la función concreta no lo haga.
     fn forget_expression_effects(&mut self, expression: &Expr) {
         match expression {
+            Expr::Qualified { arguments, .. } => {
+                if let Some(arguments) = arguments {
+                    for argument in arguments {
+                        self.forget_expression_effects(argument);
+                    }
+                }
+            }
             Expr::Call { arguments, .. } => {
                 for argument in arguments {
                     match argument {
@@ -1026,6 +1215,14 @@ impl TypeChecker {
 
     fn forget_statement_effects(&mut self, statement: &Stmt) {
         match statement {
+            Stmt::Match { value, arms, .. } => {
+                self.forget_expression_effects(value);
+                for arm in arms {
+                    for statement in &arm.body {
+                        self.forget_statement_effects(statement);
+                    }
+                }
+            }
             Stmt::Call(value)
             | Stmt::Print(value)
             | Stmt::Println(value)
@@ -1109,6 +1306,11 @@ impl TypeChecker {
     fn forget_statement_writes(&mut self, statement: &Stmt) {
         self.forget_statement_effects(statement);
         match statement {
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    self.forget_loop_writes(&arm.body);
+                }
+            }
             Stmt::Assign { name, steps, .. } => self.forget_target(name, steps),
             Stmt::If {
                 then_branch,
@@ -1300,6 +1502,9 @@ impl TypeChecker {
     fn statement_always_returns(statement: &Stmt) -> bool {
         match statement {
             Stmt::Return { value: Some(_), .. } => true,
+            Stmt::Match { arms, .. } => {
+                !arms.is_empty() && arms.iter().all(|arm| Self::always_returns(&arm.body))
+            }
             Stmt::If {
                 then_branch,
                 else_branch: Some(else_branch),

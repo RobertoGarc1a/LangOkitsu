@@ -40,6 +40,20 @@ pub struct FieldDef {
 }
 
 #[derive(Clone, Debug)]
+pub struct VariantDef {
+    pub name: Name,
+    pub fields: Vec<(Type, Name)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchArm {
+    pub enum_name: Name,
+    pub variant: Name,
+    pub bindings: Option<Vec<Name>>,
+    pub body: Vec<Stmt>,
+}
+
+#[derive(Clone, Debug)]
 pub enum TargetStep {
     Index(Expr, usize),
     Field(Name),
@@ -47,6 +61,12 @@ pub enum TargetStep {
 
 #[derive(Clone, Debug)]
 pub enum Expr {
+    // Una ruta de dos nombres puede ser una variante o una llamada de biblioteca.
+    // El comprobador decide usando los tipos declarados, no el parser.
+    Qualified {
+        path: Vec<Name>,
+        arguments: Option<Vec<Expr>>,
+    },
     Struct {
         name: Name,
         fields: Vec<(Name, Expr)>,
@@ -239,6 +259,15 @@ impl BinaryOp {
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
+    Enum {
+        name: Name,
+        variants: Vec<VariantDef>,
+    },
+    Match {
+        value: Expr,
+        arms: Vec<MatchArm>,
+        line: usize,
+    },
     Struct {
         name: Name,
         fields: Vec<FieldDef>,
@@ -347,6 +376,8 @@ impl Parser {
             TokenKind::Foreach => return self.foreach_statement(),
             TokenKind::Function => return self.function_declaration(),
             TokenKind::Struct => return self.struct_declaration(),
+            TokenKind::Enum => return self.enum_declaration(),
+            TokenKind::Match => return self.match_statement(),
             _ => {}
         }
         let statement = match self.peek().kind {
@@ -377,7 +408,13 @@ impl Parser {
                 let expression = self.postfix()?;
                 if matches!(
                     expression,
-                    Expr::LibraryCall { .. } | Expr::Cast { .. } | Expr::Call { .. }
+                    Expr::LibraryCall { .. }
+                        | Expr::Cast { .. }
+                        | Expr::Call { .. }
+                        | Expr::Qualified {
+                            arguments: Some(_),
+                            ..
+                        }
                 ) {
                     Stmt::Call(expression)
                 } else {
@@ -392,7 +429,7 @@ impl Parser {
             }
             _ => {
                 return Err(self.error(
-                    "Se esperaba una declaración con tipo, una asignación, 'import', 'use', 'if', 'while', 'for', 'foreach', 'function', 'struct', 'return', 'print' o 'println'.",
+                    "Se esperaba una declaración con tipo, una asignación, 'import', 'use', 'if', 'while', 'for', 'foreach', 'function', 'struct', 'enum', 'match', 'return', 'print' o 'println'.",
                 ));
             }
         };
@@ -422,6 +459,110 @@ impl Parser {
             self.tokens[next].kind,
             TokenKind::Identifier(_) | TokenKind::OrOr
         )
+    }
+
+    fn enum_declaration(&mut self) -> Result<Stmt, String> {
+        self.current += 1;
+        let name = self.name()?;
+        self.consume(
+            TokenKind::LeftBrace,
+            "Se esperaba '{' después del nombre del enum.",
+        )?;
+        let mut variants = Vec::new();
+        while self.peek().kind != TokenKind::RightBrace {
+            let name = self.name()?;
+            let mut fields = Vec::new();
+            if self.peek().kind == TokenKind::LeftParen {
+                self.current += 1;
+                if self.peek().kind == TokenKind::RightParen {
+                    return Err(
+                        self.error("Una variante con paréntesis requiere al menos un dato.")
+                    );
+                }
+                loop {
+                    let kind = self.array_type()?;
+                    fields.push((kind, self.name()?));
+                    if self.peek().kind != TokenKind::Comma {
+                        break;
+                    }
+                    self.current += 1;
+                }
+                self.consume(
+                    TokenKind::RightParen,
+                    "Se esperaba ')' después de los datos de la variante.",
+                )?;
+            }
+            variants.push(VariantDef { name, fields });
+            if self.peek().kind != TokenKind::Comma {
+                break;
+            }
+            self.current += 1;
+        }
+        self.consume(
+            TokenKind::RightBrace,
+            "Se esperaba ',' o '}' después de la variante.",
+        )?;
+        Ok(Stmt::Enum { name, variants })
+    }
+
+    fn match_statement(&mut self) -> Result<Stmt, String> {
+        let line = self.peek().line;
+        self.current += 1;
+        // La llave tras una variable abre las ramas, no un literal struct.
+        let value = if matches!(self.peek().kind, TokenKind::Identifier(_))
+            && self.tokens[self.current + 1].kind == TokenKind::LeftBrace
+        {
+            Expr::Variable(self.name()?)
+        } else {
+            self.expression()?
+        };
+        self.consume(
+            TokenKind::LeftBrace,
+            "Se esperaba '{' después del valor de match.",
+        )?;
+        let mut arms = Vec::new();
+        while self.peek().kind != TokenKind::RightBrace {
+            let enum_name = self.name()?;
+            self.consume(TokenKind::ColonColon, "El patrón debe ser Enum::Variante.")?;
+            let variant = self.name()?;
+            let bindings = if self.peek().kind == TokenKind::LeftParen {
+                self.current += 1;
+                let mut names = Vec::new();
+                if self.peek().kind != TokenKind::RightParen {
+                    loop {
+                        names.push(self.name()?);
+                        if self.peek().kind != TokenKind::Comma {
+                            break;
+                        }
+                        self.current += 1;
+                    }
+                }
+                self.consume(
+                    TokenKind::RightParen,
+                    "Se esperaba ')' después de las capturas.",
+                )?;
+                Some(names)
+            } else {
+                None
+            };
+            self.consume(TokenKind::FatArrow, "Se esperaba '=>' después del patrón.")?;
+            let body = self.block()?;
+            arms.push(MatchArm {
+                enum_name,
+                variant,
+                bindings,
+                body,
+            });
+            if self.peek().kind != TokenKind::Comma {
+                break;
+            }
+            self.current += 1;
+        }
+        self.consume(
+            TokenKind::RightBrace,
+            "Se esperaba ',' o '}' después de la rama de match.",
+        )?;
+        Ok(Stmt::Match { value, arms, line })
     }
 
     fn struct_declaration(&mut self) -> Result<Stmt, String> {
@@ -725,10 +866,11 @@ impl Parser {
     fn array_type(&mut self) -> Result<Type, String> {
         let mut declared_type = match &self.peek().kind {
             TokenKind::Type(basic) => basic.clone(),
-            TokenKind::Identifier(name) => Type::Struct(name.clone()),
+            TokenKind::Identifier(name) => Type::Named(name.clone()),
             _ => {
-                return Err(self
-                    .error("Se esperaba un tipo (int, float, bool, char, string o estructura)."));
+                return Err(self.error(
+                    "Se esperaba un tipo (int, float, bool, char, string, estructura o enum).",
+                ));
             }
         };
         self.current += 1;
@@ -1160,6 +1302,12 @@ impl Parser {
                         });
                     }
                     return Ok(Expr::Variable(path.remove(0)));
+                }
+                if path.len() == 2 {
+                    let arguments = if self.peek().kind == TokenKind::LeftParen {
+                        Some(self.arguments()?)
+                    } else { None };
+                    return Ok(Expr::Qualified { path, arguments });
                 }
                 Ok(Expr::LibraryCall {
                     path,

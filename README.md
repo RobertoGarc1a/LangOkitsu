@@ -88,6 +88,19 @@ Imprime `2`. Un array vacío termina la recursión. También se pueden formar li
 
 El ejemplo [lista_enlazada.oki](examples/lista_enlazada.oki) construye `10 -> 20 -> 30 -> fin`, recorre los nodos, cuenta y busca elementos, elimina el primero y demuestra las copias independientes. Consulta su [explicación y salida](docs/estado-actual.md#ejemplo-de-lista-enlazada).
 
+Un **enum** define un conjunto cerrado de variantes. Pueden no contener datos o guardar valores con tipo; se distinguen mediante un **match exhaustivo**, que exige una rama por variante:
+
+```oki
+enum Resultado { Ok(int valor), Error(string mensaje) }
+Resultado resultado = Resultado::Ok(5);
+match resultado {
+    Resultado::Ok(valor) => { println(valor); },
+    Resultado::Error(mensaje) => { println(mensaje); }
+}
+```
+
+Imprime `5`. Las capturas reciben copias y solo existen dentro de su rama. Las variantes sin datos se escriben como `Estado::Hecho`, sin paréntesis. Consulta las [reglas de enums y match](docs/estado-actual.md#enums-y-match) y el ejemplo [enums.oki](examples/enums.oki).
+
 Un **array** guarda una secuencia de elementos del mismo tipo. Los índices empiezan en cero:
 
 ```oki
@@ -289,6 +302,7 @@ cargo run -- examples/variables_union.oki
 cargo run -- examples/estructuras.oki
 cargo run -- examples/estructuras_campos.oki
 cargo run -- examples/lista_enlazada.oki
+cargo run -- examples/enums.oki
 ```
 
 ## Documentación para aprender
@@ -311,10 +325,11 @@ Seguimos el intérprete de árbol de [Crafting Interpreters](https://craftingint
 | Archivo | Responsabilidad |
 | --- | --- |
 | [src/main.rs](src/main.rs) | Lectura del archivo, coordinación de etapas y pruebas. |
+| [src/enum_tests.rs](src/enum_tests.rs) | Pruebas de enums, variantes con datos y match exhaustivo. |
 | [src/structure_tests.rs](src/structure_tests.rs) | Pruebas de campos constantes, valores por defecto, uniones y estructuras recursivas. |
 | [src/scanner.rs](src/scanner.rs) | Reconocer tokens y sus líneas (capítulo 4). |
 | [src/parser.rs](src/parser.rs) | Definir el AST y construirlo mediante análisis descendente (capítulos 5, 6 y 8). |
-| [src/value.rs](src/value.rs) | Representar tipos, valores básicos, arrays y estructuras, y su impresión (capítulo 7). |
+| [src/value.rs](src/value.rs) | Representar tipos, valores básicos, arrays, estructuras y enums, y su impresión (capítulo 7). |
 | [src/type_checker.rs](src/type_checker.rs) | Comprobar nombres y tipos antes de ejecutar; adaptación propia para el tipado estricto. |
 | [src/interpreter.rs](src/interpreter.rs) | Evaluar el AST y guardar los valores de las variables (capítulos 7 y 8). |
 | [src/stdlib.rs](src/stdlib.rs) | Habilitar por separado `Array` y `Casting`, resolver llamadas y ejecutar `len`, `push` y `pop` de arrays. |

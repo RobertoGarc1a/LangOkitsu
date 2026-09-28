@@ -1,7 +1,12 @@
-use std::{collections::HashMap, error::Error, io::Write, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    io::Write,
+    rc::Rc,
+};
 
 use crate::{
-    parser::{BinaryOp, CallArgument, Expr, FieldDef, Name, Stmt, TargetStep, UnaryOp},
+    parser::{BinaryOp, CallArgument, Expr, FieldDef, MatchArm, Name, Stmt, TargetStep, UnaryOp},
     stdlib::{ArrayFunction, casting},
     value::{Type, Value},
 };
@@ -38,6 +43,7 @@ pub struct Interpreter<W: Write> {
     scopes: Vec<HashMap<String, Binding>>,
     functions: HashMap<String, Rc<FunctionDef>>,
     structures: HashMap<String, Rc<Vec<FieldDef>>>,
+    enums: HashSet<String>,
     call_bases: Vec<usize>,
     function_depth: usize,
     construction_depth: usize,
@@ -60,6 +66,7 @@ impl<W: Write> Interpreter<W> {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             structures: HashMap::new(),
+            enums: HashSet::new(),
             call_bases: Vec::new(),
             function_depth: 0,
             construction_depth: 0,
@@ -75,13 +82,35 @@ impl<W: Write> Interpreter<W> {
     }
 
     fn execute(&mut self, statement: &Stmt) -> Result<Control, Box<dyn Error>> {
+        // Las llamadas recursivas atraviesan un despacho pequeño: las variables
+        // temporales de otras instrucciones no ocupan pila en cada llamada.
         match statement {
+            Stmt::Match { value, arms, .. } => self.execute_match(value, arms),
+            Stmt::Return { value, .. } => Ok(Control::Return(
+                value
+                    .as_ref()
+                    .map(|value| self.evaluate(value))
+                    .transpose()?,
+            )),
+            Stmt::Call(expression) => {
+                self.evaluate_call(expression)?;
+                Ok(Control::None)
+            }
+            _ => self.execute_other(statement),
+        }
+    }
+
+    fn execute_other(&mut self, statement: &Stmt) -> Result<Control, Box<dyn Error>> {
+        match statement {
+            Stmt::Enum { name, .. } => {
+                self.enums.insert(name.text.clone());
+            }
+            Stmt::Match { .. } | Stmt::Return { .. } | Stmt::Call(_) => {
+                unreachable!("despachado por execute")
+            }
             Stmt::Struct { name, fields } => {
                 self.structures
                     .insert(name.text.clone(), Rc::new(fields.clone()));
-            }
-            Stmt::Call(expression) => {
-                self.evaluate_call(expression)?;
             }
             Stmt::Function {
                 name,
@@ -210,29 +239,54 @@ impl<W: Write> Interpreter<W> {
                 let value = self.evaluate(expression)?;
                 writeln!(self.output, "{value}")?;
             }
-            Stmt::Return { value, .. } => {
-                let value = match value {
-                    Some(expression) => Some(self.evaluate(expression)?),
-                    None => None,
-                };
-                return Ok(Control::Return(value));
-            }
             Stmt::Break { .. } => return Ok(Control::Break),
             Stmt::Continue { .. } => return Ok(Control::Continue),
         }
         Ok(Control::None)
     }
 
+    fn execute_match(
+        &mut self,
+        expression: &Expr,
+        arms: &[MatchArm],
+    ) -> Result<Control, Box<dyn Error>> {
+        let Value::Enum {
+            variant, values, ..
+        } = self.evaluate(expression)?
+        else {
+            unreachable!("enum comprobado")
+        };
+        let arm = arms
+            .iter()
+            .find(|arm| arm.variant.text == variant)
+            .expect("match exhaustivo");
+        self.scopes.push(HashMap::new());
+        for (binding, value) in arm.bindings.iter().flatten().zip(values) {
+            self.scopes
+                .last_mut()
+                .expect("ámbito abierto")
+                .insert(binding.text.clone(), Binding::Owned(value));
+        }
+        // Capturas y declaraciones comparten ámbito; se cierra ante errores y saltos.
+        let result = self.execute_statements(&arm.body);
+        self.scopes.pop();
+        result
+    }
+
     fn execute_block(&mut self, statements: &[Stmt]) -> Result<Control, Box<dyn Error>> {
         self.scopes.push(HashMap::new());
+        let result = self.execute_statements(statements);
+        self.scopes.pop();
+        result
+    }
+
+    fn execute_statements(&mut self, statements: &[Stmt]) -> Result<Control, Box<dyn Error>> {
         for statement in statements {
             let control = self.execute(statement)?;
             if !matches!(control, Control::None) {
-                self.scopes.pop();
                 return Ok(control);
             }
         }
-        self.scopes.pop();
         Ok(Control::None)
     }
 
@@ -474,6 +528,16 @@ impl<W: Write> Interpreter<W> {
     }
 
     fn evaluate_call(&mut self, expression: &Expr) -> Result<Option<Value>, String> {
+        if let Expr::Qualified { path, arguments } = expression {
+            if self.enums.contains(&path[0].text) {
+                return self.evaluate(expression).map(Some);
+            }
+            return self.evaluate_library_call(
+                path,
+                None,
+                arguments.as_deref().expect("llamada de biblioteca"),
+            );
+        }
         if matches!(expression, Expr::Cast { .. }) {
             return self.evaluate(expression).map(Some);
         }
@@ -488,10 +552,19 @@ impl<W: Write> Interpreter<W> {
         else {
             unreachable!("instrucción de llamada validada")
         };
+        self.evaluate_library_call(path, receiver.as_deref(), arguments)
+    }
+
+    fn evaluate_library_call(
+        &mut self,
+        path: &[Name],
+        receiver: Option<&Expr>,
+        arguments: &[Expr],
+    ) -> Result<Option<Value>, String> {
         let function = ArrayFunction::resolve(path, receiver.is_some())?;
         let name = path.last().expect("ruta con nombre de método");
         function.check_arity(arguments.len(), receiver.is_some(), name)?;
-        let array = receiver.as_deref().unwrap_or_else(|| &arguments[0]);
+        let array = receiver.unwrap_or_else(|| &arguments[0]);
         if matches!(function, ArrayFunction::Len) {
             return function.evaluate(&mut self.evaluate(array)?, None, name);
         }
@@ -620,8 +693,49 @@ impl<W: Write> Interpreter<W> {
         })
     }
 
+    fn evaluate_qualified(
+        &mut self,
+        path: &[Name],
+        arguments: &Option<Vec<Expr>>,
+    ) -> Result<Value, String> {
+        if !self.enums.contains(&path[0].text) {
+            return self
+                .evaluate_library_call(
+                    path,
+                    None,
+                    arguments.as_deref().expect("llamada de biblioteca"),
+                )?
+                .ok_or_else(|| path[1].error("'push' no devuelve un valor."));
+        }
+        let values = arguments
+            .iter()
+            .flatten()
+            .map(|value| self.evaluate(value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let value = Value::Enum {
+            name: path[0].text.clone(),
+            variant: path[1].text.clone(),
+            values,
+        };
+        value.check_depth(0, path[1].line)?;
+        Ok(value)
+    }
+
     fn evaluate(&mut self, expression: &Expr) -> Result<Value, String> {
         match expression {
+            Expr::Qualified { path, arguments } => self.evaluate_qualified(path, arguments),
+            Expr::Call { name, arguments } => {
+                self.call_user_function(name, arguments)?.ok_or_else(|| {
+                    name.error(&format!("La función '{}' no devuelve un valor.", name.text))
+                })
+            }
+            _ => self.evaluate_other(expression),
+        }
+    }
+
+    fn evaluate_other(&mut self, expression: &Expr) -> Result<Value, String> {
+        match expression {
+            Expr::Qualified { .. } | Expr::Call { .. } => unreachable!("despachado por evaluate"),
             Expr::Struct { name, fields } => self.construct(name, fields),
             Expr::Field { object, name } => {
                 let Value::Struct { fields, .. } = self.evaluate(object)? else {
@@ -667,9 +781,6 @@ impl<W: Write> Interpreter<W> {
                 path.last()
                     .expect("ruta con nombre de método")
                     .error("'push' no devuelve un valor.")
-            }),
-            Expr::Call { name, .. } => self.evaluate_call(expression)?.ok_or_else(|| {
-                name.error(&format!("La función '{}' no devuelve un valor.", name.text))
             }),
             Expr::Literal(value) => Ok(value.clone()),
             Expr::Variable(name) => {

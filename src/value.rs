@@ -8,7 +8,7 @@ pub enum Type {
     Bool,
     Char,
     String,
-    Struct(String),
+    Named(String),
     Array(Box<Type>),
     Union(Vec<Type>),
 }
@@ -32,7 +32,7 @@ impl fmt::Display for Type {
             Self::Bool => "bool",
             Self::Char => "char",
             Self::String => "string",
-            Self::Struct(name) => return f.write_str(name),
+            Self::Named(name) => return f.write_str(name),
             Self::Array(element) => return write!(f, "{element}[]"),
             Self::Union(types) => {
                 for (index, kind) in types.iter().enumerate() {
@@ -49,6 +49,11 @@ impl fmt::Display for Type {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
+    Enum {
+        name: String,
+        variant: String,
+        values: Vec<Value>,
+    },
     Int(i64),
     Float(f64),
     Bool(bool),
@@ -75,6 +80,7 @@ impl Value {
             let children: Vec<&Value> = match value {
                 Self::Struct { fields, .. } => fields.iter().map(|(_, value)| value).collect(),
                 Self::Array { elements, .. } => elements.iter().collect(),
+                Self::Enum { values, .. } => values.iter().collect(),
                 _ => continue,
             };
             if depth >= MAX_VALUE_DEPTH {
@@ -102,7 +108,7 @@ impl Value {
             Self::Bool(_) => Type::Bool,
             Self::Char(_) => Type::Char,
             Self::String(_) => Type::String,
-            Self::Struct { name, .. } => Type::Struct(name.clone()),
+            Self::Struct { name, .. } | Self::Enum { name, .. } => Type::Named(name.clone()),
             // El tipo del elemento se conserva incluso cuando no quedan valores.
             Self::Array { element_type, .. } => Type::Array(Box::new(element_type.clone())),
         }
@@ -118,6 +124,24 @@ impl fmt::Display for Value {
             Self::Bool(value) => write!(f, "{value}"),
             Self::Char(value) => write!(f, "{value}"),
             Self::String(value) => f.write_str(value),
+            Self::Enum {
+                name,
+                variant,
+                values,
+            } => {
+                write!(f, "{name}::{variant}")?;
+                if !values.is_empty() {
+                    f.write_str("(")?;
+                    for (index, value) in values.iter().enumerate() {
+                        if index > 0 {
+                            f.write_str(", ")?;
+                        }
+                        value.fmt_nested(f)?;
+                    }
+                    f.write_str(")")?;
+                }
+                Ok(())
+            }
             Self::Struct { name, fields } => {
                 write!(f, "{name} {{")?;
                 for (index, (field, value)) in fields.iter().enumerate() {
