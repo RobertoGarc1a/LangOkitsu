@@ -19,7 +19,7 @@ fn rejects(source: &str, expected: &str) {
 #[test]
 fn executes_enums_example() {
     assert_eq!(
-        output(include_str!("../examples/enums.oki")),
+        output(include_str!("../../examples/enums.oki")),
         "Estado::Pendiente\ntrue\nhecho\n4\ndivisor cero\nResultado::Ok(4)\n"
     );
 }

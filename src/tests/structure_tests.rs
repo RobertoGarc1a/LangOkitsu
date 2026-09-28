@@ -16,7 +16,7 @@ fn rejects(source: &str, expected: &str) {
 #[test]
 fn executes_extended_structure_example() {
     assert_eq!(
-        output(include_str!("../examples/estructuras_campos.oki")),
+        output(include_str!("../../examples/estructuras_campos.oki")),
         "6\n5\nlisto!\nNodo { valor: 1, hijos: [Nodo { valor: 2, hijos: [] }] }\nNodo { valor: 1, hijos: [Nodo { valor: 9, hijos: [] }] }\n20\n"
     );
 }

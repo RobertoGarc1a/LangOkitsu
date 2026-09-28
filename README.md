@@ -324,9 +324,8 @@ Seguimos el intérprete de árbol de [Crafting Interpreters](https://craftingint
 
 | Archivo | Responsabilidad |
 | --- | --- |
-| [src/main.rs](src/main.rs) | Lectura del archivo, coordinación de etapas y pruebas. |
-| [src/enum_tests.rs](src/enum_tests.rs) | Pruebas de enums, variantes con datos y match exhaustivo. |
-| [src/structure_tests.rs](src/structure_tests.rs) | Pruebas de campos constantes, valores por defecto, uniones y estructuras recursivas. |
+| [src/main.rs](src/main.rs) | Lectura del archivo y coordinación de etapas. |
+| [src/tests/](src/tests/) | Pruebas agrupadas por área: arrays, conversiones, control de flujo, enums, estructuras, funciones, sintaxis, tipos, uniones y actualizaciones. |
 | [src/scanner.rs](src/scanner.rs) | Reconocer tokens y sus líneas (capítulo 4). |
 | [src/parser.rs](src/parser.rs) | Definir el AST y construirlo mediante análisis descendente (capítulos 5, 6 y 8). |
 | [src/value.rs](src/value.rs) | Representar tipos, valores básicos, arrays, estructuras y enums, y su impresión (capítulo 7). |

@@ -2,6 +2,13 @@
 
 Este archivo registra avances realizados. Las ideas futuras no implican que ya estén implementadas ni que haya que desarrollarlas sin una nueva petición.
 
+## 2026-09-28 — Pruebas agrupadas en una carpeta
+
+- **Qué se hizo:** se trasladaron las pruebas fuera de `src/main.rs` y se agruparon por área en `src/tests/`. Las pruebas de enums y estructuras también quedaron dentro de esa carpeta; las pruebas de estructuras generales y las de campos avanzados se mantienen en archivos separados.
+- **Por qué:** mantener el punto de entrada del intérprete centrado en leer y ejecutar programas, y facilitar encontrar las pruebas de cada capacidad.
+- **Archivos:** `src/main.rs`, los archivos de `src/tests/`, `README.md` y este historial.
+- **Validación realizada:** 174 pruebas superadas; `cargo fmt -- --check` y `cargo clippy --all-targets -- -D warnings` superados; `cargo run -- examples/hello.oki` conserva la salida `Hello World` con salto de línea.
+
 ## 2026-09-14 — Primera ejecución de un archivo
 
 - **Qué se hizo:** lectura de una ruta recibida por argumento y ejecución de `print("texto")` mediante una comprobación directa del texto.
@@ -239,3 +246,10 @@ Este archivo registra avances realizados. Las ideas futuras no implican que ya e
 - **Reglas y límites:** enums globales antes de usar, con al menos una variante, nombres únicos y calificación obligatoria. Variantes sin datos sin paréntesis; datos con tipos concretos ya declarados, argumentos exactos evaluados una vez y en orden y capturas locales modificables por copia profunda. `match` es una instrucción, exige una rama por variante y propaga `return`, `break` y `continue` al contexto correspondiente. Se admiten enums en arrays, estructuras, constantes, funciones, `inout` y uniones; Casting no convierte enums. No se añaden comodines, guardas, patrones anidados, acceso directo por campo a datos, enums genéricos o autorrecursivos, ni uniones/constantes/defectos en sus datos. Se conservan los límites de llamadas y profundidad de valores; esta última incluye enums. H03 sigue aplazado y H06/H07 pendientes.
 - **Archivos:** `src/scanner.rs`, `src/parser.rs`, `src/type_checker.rs`, `src/interpreter.rs`, `src/value.rs`, `src/stdlib/casting.rs`, adaptación del diagnóstico de tipo desconocido y registro de pruebas en `src/main.rs`, nuevos `src/enum_tests.rs` y `examples/enums.oki`, `README.md`, `docs/estado-actual.md`, `docs/funcionamiento-interno.md`, `docs/hoja-de-ruta.md` y este historial.
 - **Validación realizada:** 174 pruebas superadas con `cargo test`, incluidas dieciocho nuevas de H05 y la prueba conservada de `hello.oki`. Cubren sintaxis, tipos nominales, variantes y capturas, exhaustividad, selección y evaluación única, igualdad e impresión, ámbito y copias, integración, efectos y refinamientos, retornos y saltos de bucle, errores sin salida parcial, líneas y cierre de ámbitos, aislamiento y límites de recursión y crecimiento de valores. `cargo fmt -- --check` y `cargo clippy --all-targets -- -D warnings` superados después de aplicar formato y corregir los fallos encontrados durante el desarrollo. Ejecutados `cargo run -- examples/hello.oki` (`Hello World`) y `cargo run -- examples/enums.oki` con su salida completa documentada; ejecutados todos los ejemplos del proyecto sin errores. Verificados 81 enlaces locales y sus anclajes y ejecutados los cuatro fragmentos nuevos de documentación con las salidas esperadas. `git diff --check` superado.
+
+## 2026-09-28 — Planificación de genéricos y biblioteca en OkitsuLang
+
+- **Qué se hizo:** se añadieron H12a-H12d para funciones, estructuras y enums genéricos y restricciones sobre parámetros de tipo; H13 para llamadas con punto a funciones de biblioteca; H14 para una std parcialmente escrita en archivos `.oki`. Cada propuesta incluye alcance, decisiones pendientes, etapas, dependencias y comprobaciones previstas. Se aclararon las dependencias con resultados recuperables de H07 y módulos de H09, y se corrigió el resumen inicial para incluir H05 entre los hitos implementados.
+- **Por qué:** registrar la petición del usuario de planificar código reutilizable y conectar los genéricos con `datos.contiene(...)` y algoritmos de biblioteca escritos en el lenguaje, manteniendo avances pequeños y comprobación de tipos antes de ejecutar.
+- **Archivos:** [docs/hoja-de-ruta.md](hoja-de-ruta.md) y este historial. Las sintaxis nuevas son tentativas y no están implementadas; no cambió el comportamiento del lenguaje ni se editaron archivos Rust.
+- **Validación realizada:** revisión de ejemplos propuestos frente a las capacidades actuales, identificadores y dependencias de los nuevos hitos y enlaces locales de los dos documentos modificados. `git diff --check` superado para ambos archivos. No se ejecutaron pruebas de Rust ni se recompiló por tratarse de un cambio exclusivamente documental.

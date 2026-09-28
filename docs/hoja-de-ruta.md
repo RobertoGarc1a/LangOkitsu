@@ -1,6 +1,6 @@
 # Hoja de ruta de OkitsuLang
 
-Este documento convierte ideas en encargos pequeños y revisables. **H01, H02a, H02b y H04 están implementados; los demás hitos son propuestas y este documento no autoriza por sí mismo a desarrollarlos**. Las instrucciones del repositorio exigen un encargo del usuario para cambiar el código.
+Este documento convierte ideas en encargos pequeños y revisables. **H01, H02a, H02b, H04 y H05 están implementados; los demás hitos son propuestas y este documento no autoriza por sí mismo a desarrollarlos**. Las instrucciones del repositorio exigen un encargo del usuario para cambiar el código.
 
 ## Estado de partida
 
@@ -21,6 +21,8 @@ Los hitos pequeños y no solapados (por ejemplo, `break` y `continue` después d
 ## Orden propuesto
 
 Las dependencias indican el orden aconsejado. H01, H02a, H02b, H04 y H05 están completados; H03 se ha aplazado por indicación del usuario y los demás hitos siguen pendientes.
+
+Para desarrollar código reutilizable, se propone H12a (funciones genéricas), H12b (estructuras genéricas) y H12c (enums genéricos); H12d añade restricciones explícitas sobre los tipos. H13 (métodos de biblioteca) es independiente de los genéricos, y H14 incorpora código `.oki` a la biblioteca estándar. Si H07 adopta resultados genéricos, necesita H12c aunque su identificador sea anterior. Los identificadores se conservan; no representan una secuencia obligatoria.
 
 ### H01 — `break` y `continue`
 
@@ -123,7 +125,7 @@ Las dependencias indican el orden aconsejado. H01, H02a, H02b, H04 y H05 están 
 - **Sintaxis tentativa:** `Resultado<int, string>`, `Ok(valor)` y `Err(mensaje)`, tratados inicialmente mediante enums genéricos si el sistema de tipos lo permite. No introducir `?` de propagación en la primera entrega.
 - **Semántica por decidir:** tipos genéricos, igualdad e impresión, convención del tipo de error, si `return` puede devolver `Err`, y cómo una función comunica fallos. Separar estos valores de los errores actuales del intérprete (errores de ejecución que detienen el programa).
 - **Etapas:** `parser`/AST para tipos genéricos y constructores, `type_checker`, `value`/`interpreter`; `stdlib` al migrar operaciones que fallen de forma recuperable.
-- **Dependencias:** H02 para funciones tipadas; H05 para distinguir variantes y leer el resultado. H06 comparte conceptos pero no es requisito.
+- **Dependencias:** H02 para funciones tipadas; H05 para distinguir variantes y leer el resultado; H12c si se adopta `Resultado<T, E>` como enum genérico. H06 comparte conceptos pero no es requisito. Antes de H12c solo se pueden declarar resultados para tipos concretos, sin presentarlos como genéricos.
 - **Pruebas observables:** función que devuelve `Ok` y `Err`, coincidencia en ambos casos, incompatibilidad entre parámetros genéricos, y demostrar que `Err` no detiene por sí mismo el intérprete.
 - **Documentación al implementarlo:** distinguir error como valor de fallo del lenguaje en estado y funcionamiento interno; ejemplos, historial y enlaces.
 
@@ -157,6 +159,7 @@ Las dependencias indican el orden aconsejado. H01, H02a, H02b, H04 y H05 están 
 - **Semántica por decidir:** rutas relativas al módulo importador o a la raíz del proyecto, extensiones, ciclos, orden de evaluación, visibilidad pública/privada, nombres repetidos, importaciones transitivas y diagnóstico con ruta y línea de origen.
 - **Etapas:** lectura/coordinación en `main.rs`, `scanner`/`parser` si cambia la gramática, `type_checker` con entorno entre archivos e `interpreter` con orden de ejecución. `stdlib` debe conservar su resolución y distinguir bibliotecas estándar de módulos propios.
 - **Dependencias:** H02 para exportar funciones es muy recomendable; H04/H05 se incorporan solo al permitir exportarlas.
+- **Relación con H14:** el cargador y la resolución de nombres pueden reutilizarse para archivos `.oki` de la biblioteca estándar, pero importar archivos propios y cargar bibliotecas incluidas son encargos distintos.
 - **Pruebas observables:** importar módulo simple, dos módulos, resolución desde subdirectorio, símbolo privado, ruta inexistente y ciclo según regla adoptada. Comprobar errores con archivo y línea correctos.
 - **Documentación al implementarlo:** actualizar instrucciones de ejecución/organización, funcionamiento interno del cargador y resolución, ejemplos de varios archivos, historial y enlaces.
 
@@ -201,6 +204,71 @@ Las dependencias indican el orden aconsejado. H01, H02a, H02b, H04 y H05 están 
 - **Dependencias:** H11a, evidencia de uso de H11b y una decisión independiente sobre compilación. No adelantar una máquina virtual por esta propuesta.
 - **Pruebas observables:** casos cuya cota sea demostrable y casos que deben producir “no se puede demostrar”; contrastar únicamente métricas definidas por el modelo.
 - **Documentación al implementarlo:** documentar con precisión las garantías y límites en estado y funcionamiento interno, mantener ejemplos fieles y añadir historial.
+
+### H12 — Funciones y tipos genéricos
+
+**Estado: pendiente; no implementado.** Un parámetro de tipo, como `T`, permite reutilizar una definición con distintos tipos concretos. Todas las apariciones del mismo parámetro deben representar el mismo tipo en cada uso; no se añaden conversiones implícitas ni un tipo que acepte cualquier valor.
+
+La sintaxis de esta sección es una propuesta. La comprobación debe seguir ocurriendo antes de ejecutar el programa. Como estrategia inicial se propone preparar y comprobar una versión de cada función para cada combinación de tipos utilizada, reutilizando el intérprete de árbol; esto no implica generar código máquina ni añadir una máquina virtual. Deben aislarse las anotaciones de tipos del AST entre versiones, especialmente las de arrays vacíos, y conservar los ámbitos y el orden de declaración actuales.
+
+#### H12a — Funciones genéricas
+
+- **Sintaxis tentativa:** `function identidad<T>(T valor) -> T { return valor; }` y `function contiene<T>(T[] datos, T buscado) -> bool { ... }`. Las llamadas `identidad(3)` y `identidad("Hola")` deducirían `T` como `int` y `string`, respectivamente.
+- **Semántica por decidir:** uno o varios parámetros de tipo, alcance y nombres únicos, deducción a partir de argumentos y forma de indicar tipos explícitos cuando no puedan deducirse. `contiene([1, 2], "x")` debe rechazarse por incompatibilidad; un array vacío necesita contexto suficiente. Comprobar parámetros, variables locales, retorno y operaciones del cuerpo con la sustitución concreta; rechazar antes de ejecutar una llamada cuyo tipo no admita esas operaciones. Decidir si las funciones no utilizadas requieren comprobaciones adicionales del cuerpo.
+- **Etapas:** `parser`/AST para parámetros y argumentos de tipo; `value` para representar parámetros de tipo distintos de tipos nominales; `type_checker` para deducción, sustitución y comprobación de versiones; `interpreter` para ejecutar el cuerpo seleccionado. Revisar `scanner` solo si la sintaxis necesita tokens nuevos; `<` y `>` ya existen como comparaciones.
+- **Dependencias:** H02. No exige módulos, estructuras genéricas, métodos con punto ni restricciones de H12d.
+- **Pruebas observables:** una misma función con enteros y cadenas, retorno dependiente de `T`, arrays y vacíos con contexto, `inout` con tipos exactos, llamadas entre funciones genéricas y recursión directa. Rechazar parámetros de tipo desconocidos o repetidos, deducción insuficiente, argumentos incompatibles y operaciones no admitidas sin salida parcial. Definir un límite para la creación de versiones cuando la recursión cambie los tipos, separado del límite de llamadas en ejecución.
+- **Documentación al implementarlo:** estado con sintaxis y reglas de deducción; funcionamiento interno con entrada, sustitución de `T`, AST comprobado y resultado; ejemplo, historial y enlaces.
+
+#### H12b — Estructuras genéricas
+
+- **Sintaxis tentativa:** `struct Caja<T> { T valor; }` y `Caja<int> caja = Caja<int> { valor: 3 };`. `struct Par<A, B> { A primero; B segundo; }` permitiría campos de dos tipos distintos.
+- **Semántica por decidir:** cantidad exacta de argumentos de tipo, construcción explícita o con deducción, anidamiento como `Caja<int[]>`, valores por defecto y campos unión que contengan parámetros de tipo. `Caja<int>` y `Caja<string>` deben ser tipos distintos; sustituir `T` también en campos y firmas que usen la estructura. Conservar campos públicos, copias profundas, protección de `const` e igualdad nominal por contenido. Empezar con estructuras no recursivas y dejar la recursión genérica para un encargo separado, tras definir sus límites.
+- **Etapas:** `parser`/AST para tipos aplicados como `Caja<int>` y construcciones; `value` para identidad y argumentos del tipo; `type_checker` para validar campos sustituidos y compatibilidad; `interpreter` para construcción, valores por defecto, impresión y copias.
+- **Dependencias:** H04 y la representación/sustitución de parámetros de H12a. No se añaden métodos dentro de estructuras ni se cambia la decisión de reservar los métodos propios para futuras clases.
+- **Pruebas observables:** cajas de tipos distintos, varios parámetros, estructuras y arrays anidados, uso en funciones e `inout`, valores por defecto y constantes. Rechazar cantidad de tipos incorrecta, campos incompatibles y asignaciones entre especializaciones distintas; comprobar que las copias siguen siendo independientes.
+- **Documentación al implementarlo:** estado con identidad y construcción; funcionamiento interno con definición genérica, campos concretos y valor construido; ejemplo, historial y enlaces.
+
+#### H12c — Enums genéricos
+
+- **Sintaxis tentativa:** `enum Opcion<T> { Alguno(T valor), Ninguno }` y `enum Resultado<T, E> { Ok(T valor), Error(E error) }`. Acordar la calificación de constructores, por ejemplo `Opcion<int>::Alguno(3)`, y cuándo puede deducirse el tipo.
+- **Semántica por decidir:** sustitución en los datos de variantes, contexto para variantes sin datos y capturas de `match` con tipos concretos. Conservar exhaustividad, evaluación única, copias independientes e identidad nominal incluyendo los argumentos de tipo. No introducir automáticamente opcionales, resultados predefinidos ni propagación de errores; esas capacidades pertenecen a H06/H07.
+- **Etapas:** `parser`/AST para rutas y tipos aplicados; `type_checker` para construcción, contexto y capturas; `value`/`interpreter` para conservar argumentos de tipo, igualdad, impresión y selección de ramas.
+- **Dependencias:** H05 y el soporte de tipos aplicados de H12b. H06 puede seguir un diseño específico sin genéricos; H07 depende de este hito si adopta un resultado genérico.
+- **Pruebas observables:** variantes con y sin datos, datos y capturas de distintos tipos, enums genéricos anidados, exhaustividad y retorno desde ramas. Rechazar construcción sin contexto suficiente, datos incompatibles y mezcla de especializaciones.
+- **Documentación al implementarlo:** estado y funcionamiento interno con un enum genérico concreto y su `match`; ejemplo, historial y enlaces.
+
+#### H12d — Restricciones sobre parámetros de tipo
+
+- **Objetivo:** expresar qué operaciones debe admitir `T`. Por ejemplo, una búsqueda necesita igualdad; una suma necesita adición; una ordenación necesita una relación de orden definida. No asumir que cualquier operación sirve para cualquier tipo.
+- **Sintaxis y semántica por decidir:** nombres y forma de las restricciones, comprobación del cuerpo bajo esas garantías y diagnóstico cuando un argumento no las cumple. Empezar por capacidades ya existentes en los operadores; estudiar interfaces o traits (contratos que declaran operaciones disponibles) en un diseño posterior, sin copiar todo el sistema de Rust.
+- **Etapas:** `parser`/AST si las restricciones se escriben en la firma; `type_checker` para garantías y validación de llamadas. Cambiar `value`, `interpreter` o `stdlib` solo si el modelo acordado lo exige.
+- **Dependencias:** H12a y experiencia con su comprobación por tipos concretos. Las restricciones explícitas amplían ese modelo; no son requisito para la primera función genérica.
+- **Pruebas observables:** funciones con tipos que cumplen la restricción, tipos que no la cumplen y cuerpos que usan operaciones no autorizadas por la firma; errores claros antes de ejecutar.
+- **Documentación al implementarlo:** explicar cada restricción, sus garantías y límites; ejemplo, funcionamiento interno e historial.
+
+### H13 — Métodos de biblioteca escritos en OkitsuLang
+
+**Estado: pendiente; no implementado.** Permitir `datos.contiene(valor)` para funciones de biblioteca, usando el receptor (`datos`, el valor antes del punto) como primer argumento. Hoy las llamadas con punto solo resuelven las operaciones nativas disponibles, como `len`, `push`, `pop` y `cast`.
+
+- **Sintaxis tentativa:** `datos.contiene(20)` equivalente a `contiene(datos, 20)` para una función registrada como método de biblioteca. Acordar cómo se registra y habilita; no convertir automáticamente cualquier función global en un método.
+- **Semántica por decidir:** resolución por tipo del receptor, bibliotecas importadas, colisiones entre nombres, aridad, retornos y funciones genéricas. Evaluar receptor y argumentos una sola vez y en orden. Para métodos que muten el receptor, definir cómo se respeta `inout` y qué destinos se admiten, conservando `const` y protección de globales.
+- **Etapas:** `parser`/AST para una llamada con receptor resoluble a función propia; `type_checker`/`stdlib` para registro y selección; `interpreter` para pasar el receptor a la función sin duplicar su evaluación.
+- **Dependencias:** H02; H12a solo si se quiere un método genérico. Puede diseñarse primero con funciones para tipos concretos y probarse antes del cargador de H14. No añade métodos declarados dentro de estructuras ni clases.
+- **Pruebas observables:** equivalencia de llamada con punto y función, tipo de receptor incorrecto, biblioteca sin importar, nombres ambiguos, orden y evaluación única. Si se autorizan métodos mutables, comprobar originales, copias y rechazo de constantes.
+- **Documentación al implementarlo:** estado con reglas de habilitación; funcionamiento interno con resolución y llamada equivalente; ejemplo, historial y enlaces.
+
+### H14 — Biblioteca estándar parcialmente escrita en `.oki`
+
+**Estado: pendiente; no implementado.** Mantener operaciones básicas en Rust y escribir algoritmos de biblioteca en OkitsuLang. Las importaciones actuales habilitan nombres nativos; no cargan otros archivos.
+
+- **Alcance inicial propuesto:** una biblioteca incluida con el intérprete que contenga una función de búsqueda para `int[]`, sin ampliar a la vez toda la API de arrays. Reutilizar scanner, parser/AST, comprobador e intérprete para ese código; no ejecutar funciones mediante comprobaciones del texto completo.
+- **Semántica por decidir:** ubicación e inclusión de fuentes `.oki`, carga única por ejecución, ámbitos propios sin acceso accidental a las globales del usuario, exportaciones, dependencias y diagnósticos con archivo y línea de biblioteca. Acordar si los archivos de biblioteca admiten instrucciones de nivel superior y cuándo se ejecutan. La comprobación debe cubrir también la biblioteca antes de producir salida del programa.
+- **Distribución propuesta:** Rust conserva inicialmente impresión, `len`, `push`, `pop`, conversiones y el acceso al sistema que se autorice en H08. Las funciones `.oki` combinan esas operaciones para buscar, invertir u ordenar; cada algoritmo requiere su propio encargo y pruebas. H14 no autoriza migrar todas las operaciones existentes.
+- **Etapas:** coordinación/cargador, resolución en `stdlib` y `type_checker`, registro y ejecución en `interpreter`; `parser`/AST solo si las exportaciones o rutas necesitan una representación nueva.
+- **Dependencias:** H02 y un cargador con nombres y diagnósticos por archivo; H09 es una base reutilizable, pero puede acordarse primero un cargador limitado a bibliotecas incluidas. H12a permite reutilizar el algoritmo con varios tipos y H13 permite la llamada con punto; ninguno es obligatorio para una primera función de tipo concreto.
+- **Pruebas observables:** importación y resultado de la función `.oki`, dependencia de operaciones nativas, aislamiento de ámbitos, carga repetida, nombre no exportado y error con archivo/línea correctos. Conservar las llamadas actuales de Array y Casting y `hello.oki`.
+- **Documentación al implementarlo:** estado con qué partes de la std están en Rust y cuáles en `.oki`, funcionamiento interno del cargador y recorrido de una llamada, ejemplo, historial y enlaces.
 
 ## Requisitos para cerrar cualquier hito
 
