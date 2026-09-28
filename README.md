@@ -331,7 +331,8 @@ Seguimos el intérprete de árbol de [Crafting Interpreters](https://craftingint
 | [src/value.rs](src/value.rs) | Representar tipos, valores básicos, arrays, estructuras y enums, y su impresión (capítulo 7). |
 | [src/type_checker.rs](src/type_checker.rs) | Comprobar nombres y tipos antes de ejecutar; adaptación propia para el tipado estricto. |
 | [src/interpreter.rs](src/interpreter.rs) | Evaluar el AST y guardar los valores de las variables (capítulos 7 y 8). |
-| [src/stdlib.rs](src/stdlib.rs) | Habilitar por separado `Array` y `Casting`, resolver llamadas y ejecutar `len`, `push` y `pop` de arrays. |
+| [src/stdlib.rs](src/stdlib.rs) | Habilitar por separado `Array` y `Casting`, y comprobar las importaciones. |
+| [src/stdlib/array.rs](src/stdlib/array.rs) | Funciones del módulo `array` para resolver `len`, `push` y `pop`, comprobar sus argumentos y tipos, y ejecutar las operaciones. |
 | [src/stdlib/casting.rs](src/stdlib/casting.rs) | Comprobar los pares de tipos convertibles y transformar valores, validando texto, rangos y Unicode. |
 
 El libro usa tipado dinámico en Lox; OkitsuLang exige anotaciones de tipo y compatibilidad sin conversiones implícitas; una unión enumera las alternativas permitidas. Solo se implementa el fragmento descrito en la documentación: hay funciones propias, con o sin valor de retorno, y llamadas a la biblioteca estándar, pero todavía no hay máquina virtual.

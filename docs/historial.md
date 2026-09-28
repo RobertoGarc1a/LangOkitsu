@@ -2,6 +2,20 @@
 
 Este archivo registra avances realizados. Las ideas futuras no implican que ya estén implementadas ni que haya que desarrollarlas sin una nueva petición.
 
+## 2026-09-28 — Interfaz de Array mediante funciones de módulo
+
+- **Qué se hizo:** se eliminó `ArrayFunction` y su reexportación. `stdlib.rs` expone `pub mod array;` y `pub mod casting;`; el comprobador y el intérprete usan funciones como `array::resolve()`, `array::check_arity()`, `array::result_type()` y `array::evaluate()`. `StandardLibrary::check_array()` comprueba la ruta y las importaciones.
+- **Por qué:** usar Array a través de su módulo, siguiendo el estilo de Casting. Las reglas de modificación y del argumento adicional de `push` se consultan mediante `array::mutates()` y `array::takes_value()`.
+- **Archivos:** `src/stdlib.rs`, `src/stdlib/array.rs`, `src/type_checker.rs`, `src/interpreter.rs`, `README.md`, `docs/funcionamiento-interno.md` y este historial.
+- **Validación realizada:** 174 pruebas superadas; `cargo fmt -- --check` y `cargo clippy --all-targets -- -D warnings` superados; `cargo run -- examples/hello.oki` conserva la salida `Hello World` con salto de línea. Se verificó que `src/` ya no contiene referencias a `ArrayFunction`.
+
+## 2026-09-28 — Lógica de Array separada en stdlib
+
+- **Qué se hizo:** se trasladó `ArrayFunction` —resolución de `len`, `push` y `pop`, validación de argumentos y tipos, y ejecución— de `src/stdlib.rs` a `src/stdlib/array.rs`. Se conserva su reexportación para que el comprobador y el intérprete sigan usando la misma interfaz.
+- **Por qué:** mantener cada biblioteca estándar en su propio módulo dentro de `stdlib/`, siguiendo la separación que ya tenía Casting.
+- **Archivos:** `src/stdlib.rs`, nuevo `src/stdlib/array.rs`, `README.md`, `docs/funcionamiento-interno.md` y este historial.
+- **Validación realizada:** 174 pruebas superadas; `cargo fmt -- --check` y `cargo clippy --all-targets -- -D warnings` superados; `cargo run -- examples/hello.oki` conserva la salida `Hello World` con salto de línea.
+
 ## 2026-09-28 — Pruebas agrupadas en una carpeta
 
 - **Qué se hizo:** se trasladaron las pruebas fuera de `src/main.rs` y se agruparon por área en `src/tests/`. Las pruebas de enums y estructuras también quedaron dentro de esa carpeta; las pruebas de estructuras generales y las de campos avanzados se mantienen en archivos separados.

@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     parser::{BinaryOp, CallArgument, Expr, FieldDef, MatchArm, Name, Stmt, TargetStep, UnaryOp},
-    stdlib::{ArrayFunction, casting},
+    stdlib::{array, casting},
     value::{Type, Value},
 };
 
@@ -561,17 +561,17 @@ impl<W: Write> Interpreter<W> {
         receiver: Option<&Expr>,
         arguments: &[Expr],
     ) -> Result<Option<Value>, String> {
-        let function = ArrayFunction::resolve(path, receiver.is_some())?;
+        array::resolve(path, receiver.is_some())?;
         let name = path.last().expect("ruta con nombre de método");
-        function.check_arity(arguments.len(), receiver.is_some(), name)?;
+        array::check_arity(arguments.len(), receiver.is_some(), name)?;
         let array = receiver.unwrap_or_else(|| &arguments[0]);
-        if matches!(function, ArrayFunction::Len) {
-            return function.evaluate(&mut self.evaluate(array)?, None, name);
+        if !array::mutates(name) {
+            return array::evaluate(&mut self.evaluate(array)?, None, name);
         }
         let (target, steps) = array.clone().into_target().expect("destino comprobado");
         let (scope, positions) = self.resolve_target(&target, &steps)?;
         let expected = self.target_value(scope, &target, &positions)?.value_type();
-        let value = if matches!(function, ArrayFunction::Push) {
+        let value = if array::takes_value(name) {
             Some(self.evaluate(arguments.last().expect("argumento validado"))?)
         } else {
             None
@@ -583,7 +583,7 @@ impl<W: Write> Interpreter<W> {
         if array.value_type() != expected {
             return Err(target.error("El destino cambió de tipo durante la evaluación."));
         }
-        function.evaluate(array, value, name)
+        array::evaluate(array, value, name)
     }
 
     // Llama a una función propia. Los argumentos se evalúan de izquierda a

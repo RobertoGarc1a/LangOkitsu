@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     parser::{BinaryOp, CallArgument, Expr, FieldDef, Name, Stmt, TargetStep, UnaryOp, VariantDef},
-    stdlib::{ArrayFunction, StandardLibrary},
+    stdlib::{StandardLibrary, array},
     value::Type,
 };
 
@@ -881,19 +881,19 @@ impl TypeChecker {
         receiver: Option<&Expr>,
         arguments: &[Expr],
     ) -> Result<Option<Type>, String> {
-        let function = self.library.resolve(path, receiver.is_some())?;
+        self.library.check_array(path, receiver.is_some())?;
         let name = path.last().expect("ruta con nombre de método");
-        function.check_arity(arguments.len(), receiver.is_some(), name)?;
+        array::check_arity(arguments.len(), receiver.is_some(), name)?;
         let array = receiver.unwrap_or_else(|| &arguments[0]);
         let array_type = self.expression_type(array)?;
-        let result = function.result_type(&array_type, name)?;
-        if !matches!(function, ArrayFunction::Len) {
+        let result = array::result_type(&array_type, name)?;
+        if array::mutates(name) {
             let (target, steps) = array.clone().into_target().ok_or_else(|| {
                 name.error("Se necesita una variable array modificable o uno de sus subarrays.")
             })?;
             self.assignment_target(&target, &steps)?;
         }
-        if matches!(function, ArrayFunction::Push) {
+        if array::takes_value(name) {
             let Type::Array(element) = array_type else {
                 unreachable!("tipo comprobado")
             };
